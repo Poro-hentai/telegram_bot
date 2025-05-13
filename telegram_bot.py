@@ -2,6 +2,7 @@ import os
 import re
 import uuid
 import logging
+import json
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
@@ -81,14 +82,24 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         local_path = f"{uuid.uuid4().hex}_{original_name}"
         await telegram_file.download_to_drive(local_path)
 
+        # Create callback-safe token
+        data_token = str(uuid.uuid4().hex)
+        context.chat_data[data_token] = {
+            "file_path": local_path,
+            "new_name": new_name
+        }
+
+        buttons = []
         if is_video_file(original_name):
-            buttons = [[
-                InlineKeyboardButton("🎬 Send as Video", callback_data=f"video||{local_path}||{new_name}"),
-                InlineKeyboardButton("📄 Send as Document", callback_data=f"doc||{local_path}||{new_name}")
-            ]]
+            buttons.append([
+                InlineKeyboardButton("🎬 Send as Video", callback_data=f"send|video|{data_token}"),
+                InlineKeyboardButton("📄 Send as Document", callback_data=f"send|doc|{data_token}")
+            ])
         else:
-            buttons = [[InlineKeyboardButton("📄 Send File", callback_data=f"doc||{local_path}||{new_name}")]]
-        
+            buttons.append([
+                InlineKeyboardButton("📄 Send File", callback_data=f"send|doc|{data_token}")
+            ])
+
         await message.reply_text(
             "✅ File downloaded. Choose send method:",
             reply_markup=InlineKeyboardMarkup(buttons)
@@ -136,8 +147,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     try:
-        mode, file_path, new_name = query.data.split("||")
+        parts = query.data.split("|")
+        if len(parts) != 3:
+            await query.edit_message_text("❌ Invalid button data.")
+            return
+
+        action, mode, token = parts
+        if action != "send" or token not in context.chat_data:
+            await query.edit_message_text("❌ Invalid or expired request.")
+            return
+
+        data = context.chat_data.pop(token)
+        file_path = data["file_path"]
+        new_name = data["new_name"]
         as_video = (mode == "video")
+
         await query.edit_message_text("📤 Uploading...")
         await send_file(context, query.message.chat.id, file_path, new_name, as_video)
     except Exception as e:
@@ -146,7 +170,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- MAIN ---
 if __name__ == "__main__":
     import asyncio
-    TOKEN = "7363840731:AAEJgsvRByF09qtWm5LqJFTxgKVnOnmBYzw"  # Replace this
+    TOKEN = "7363840731:AAEJgsvRByF09qtWm5LqJFTxgKVnOnmBYzw"  # Replace with your real bot token
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
