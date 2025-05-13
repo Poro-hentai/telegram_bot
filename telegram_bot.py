@@ -146,7 +146,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- MAIN ---
 if __name__ == "__main__":
     import asyncio
-    TOKEN = "YOUR_BOT_TOKEN"  # Replace this
+    TOKEN = " 7363840731:AAEJgsvRByF09qtWm5LqJFTxgKVnOnmBYzw"  # Replace this
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
