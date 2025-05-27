@@ -3,7 +3,6 @@ import re
 import uuid
 import logging
 import threading
-import requests
 from flask import Flask
 from telegram import Update
 from telegram.ext import (
@@ -46,8 +45,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Commands:\n"
         "`/setpattern` - Set rename pattern (use `{original}`, `{number}`)\n"
         "`/reset` - Reset counter\n"
-        "`/setthumb` - Send image to set as thumbnail\n"
-        "`/setthumburl <url>` - Set thumbnail from a direct image URL",
+        "`/setthumb` - Set thumbnail (for videos only)",
         parse_mode="Markdown"
     )
 
@@ -75,25 +73,6 @@ async def set_thumbnail(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ Default thumbnail set.")
     else:
         await update.message.reply_text("❗ Please send a JPG or PNG image.")
-
-async def set_thumbnail_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global user_thumbnail
-    if not context.args:
-        await update.message.reply_text("❗ Usage: /setthumburl https://example.com/thumb.jpg")
-        return
-    url = context.args[0]
-    try:
-        r = requests.get(url)
-        if r.status_code == 200 and r.headers["Content-Type"].startswith("image/"):
-            thumb_path = f"thumb_{uuid.uuid4().hex}.jpg"
-            with open(thumb_path, "wb") as f:
-                f.write(r.content)
-            user_thumbnail = thumb_path
-            await update.message.reply_text("✅ Thumbnail set from URL.")
-        else:
-            await update.message.reply_text("❌ Invalid image URL.")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error: {e}")
 
 # --- File Handler ---
 def is_video_file(name):
@@ -159,7 +138,6 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("setpattern", setpattern))
     app.add_handler(CommandHandler("reset", reset_counter))
     app.add_handler(CommandHandler("setthumb", set_thumbnail))
-    app.add_handler(CommandHandler("setthumburl", set_thumbnail_url))
     app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_file))
     app.add_handler(MessageHandler(filters.PHOTO, set_thumbnail))
 
