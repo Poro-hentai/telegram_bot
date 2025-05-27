@@ -2,8 +2,8 @@ import os
 import re
 import uuid
 import logging
-import json
 import threading
+from flask import Flask
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
@@ -18,7 +18,7 @@ counter = 1
 file_counter = 0
 user_thumbnail = None
 
-# Dummy Flask web server to keep Render alive
+# Flask app to keep Render alive
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
@@ -179,9 +179,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- MAIN ---
 if __name__ == "__main__":
-    threading.Thread(target=run_flask).start()  # Start Flask server
+    threading.Thread(target=run_flask).start()  # Start Flask server in separate thread
 
-    TOKEN = "7363840731:AAE7TD7eLEs7GjbsguH70v5o2XhT89BePCM"  # Replace this with your real bot token
+    TOKEN = "7363840731:AAE7TD7eLEs7GjbsguH70v5o2XhT89BePCM"  # Your real bot token
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
