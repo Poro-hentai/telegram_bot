@@ -182,7 +182,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()  # Start Flask server
 
-    TOKEN = "7363840731:AAEJgsvRByF09qtWm5LqJFTx"  # Replace this with your real bot token
+    TOKEN = "7363840731:AAE7TD7eLEs7GjbsguH70v5o2XhT89BePCM"  # Replace this with your real bot token
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
