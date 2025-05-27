@@ -3,6 +3,7 @@ import re
 import uuid
 import logging
 import threading
+import requests
 from flask import Flask
 from telegram import Update
 from telegram.ext import (
@@ -15,10 +16,9 @@ logging.basicConfig(level=logging.INFO)
 # Globals
 pattern = "{original}"
 file_counter = 0
-auto_rename = False
 user_thumbnail = None
 
-# Flask app to keep server alive (for Replit or Render)
+# Flask app for hosting
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
@@ -29,37 +29,25 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host="0.0.0.0", port=port)
 
-# --- Filename & Episode Handling ---
-def extract_episode(filename):
-    match = re.search(r"(?:[eE]p?\.?|[_\-\s])(\d{1,3})", filename)
-    return match.group(1).zfill(2) if match else None
-
+# --- Filename Generation ---
 def generate_filename(original_name):
-    global file_counter, pattern, auto_rename
+    global file_counter, pattern
     file_counter += 1
     base, ext = os.path.splitext(original_name)
     if not ext:
         ext = ".mp4"
-
-    if auto_rename and "{episode}" in pattern:
-        episode = extract_episode(base)
-        if episode:
-            return pattern.replace("{episode}", episode) + ext
-        else:
-            return pattern.replace("{episode}", "00") + ext  # fallback if episode not found
-
     return pattern.replace("{number}", str(file_counter)).replace("{original}", base) + ext
 
-# --- Bot Commands ---
+# --- Commands ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 *Welcome to File Renamer Bot!*\n\n"
         "Send me any file, and I'll rename it using your custom pattern.\n\n"
         "Commands:\n"
-        "`/setpattern` - Set rename pattern (use `{original}`, `{number}`, `{episode}`)\n"
-        "`/autorename` - Enable episode number rename\n"
-        "`/reset` - Reset counter and disable autorename\n"
-        "`/setthumb` - Set thumbnail (for videos only)",
+        "`/setpattern` - Set rename pattern (use `{original}`, `{number}`)\n"
+        "`/reset` - Reset counter\n"
+        "`/setthumb` - Send image to set as thumbnail\n"
+        "`/setthumburl <url>` - Set thumbnail from a direct image URL",
         parse_mode="Markdown"
     )
 
@@ -69,18 +57,12 @@ async def setpattern(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pattern = " ".join(context.args)
         await update.message.reply_text(f"✅ Pattern set to:\n{pattern}")
     else:
-        await update.message.reply_text("❗ Usage: /setpattern Series S01E{episode}")
-
-async def autorename(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global auto_rename
-    auto_rename = True
-    await update.message.reply_text("✅ Autorename enabled. Will use episode number if found.")
+        await update.message.reply_text("❗ Usage: /setpattern Series S01 - {number}")
 
 async def reset_counter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global file_counter, auto_rename
+    global file_counter
     file_counter = 0
-    auto_rename = False
-    await update.message.reply_text("🔄 Counter reset and autorename disabled.")
+    await update.message.reply_text("🔄 Counter reset.")
 
 async def set_thumbnail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global user_thumbnail
@@ -94,7 +76,26 @@ async def set_thumbnail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❗ Please send a JPG or PNG image.")
 
-# --- File Handling ---
+async def set_thumbnail_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global user_thumbnail
+    if not context.args:
+        await update.message.reply_text("❗ Usage: /setthumburl https://example.com/thumb.jpg")
+        return
+    url = context.args[0]
+    try:
+        r = requests.get(url)
+        if r.status_code == 200 and r.headers["Content-Type"].startswith("image/"):
+            thumb_path = f"thumb_{uuid.uuid4().hex}.jpg"
+            with open(thumb_path, "wb") as f:
+                f.write(r.content)
+            user_thumbnail = thumb_path
+            await update.message.reply_text("✅ Thumbnail set from URL.")
+        else:
+            await update.message.reply_text("❌ Invalid image URL.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
+
+# --- File Handler ---
 def is_video_file(name):
     return name.lower().endswith(('.mp4', '.mkv', '.mov'))
 
@@ -156,9 +157,9 @@ if __name__ == "__main__":
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("setpattern", setpattern))
-    app.add_handler(CommandHandler("autorename", autorename))
     app.add_handler(CommandHandler("reset", reset_counter))
     app.add_handler(CommandHandler("setthumb", set_thumbnail))
+    app.add_handler(CommandHandler("setthumburl", set_thumbnail_url))
     app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_file))
     app.add_handler(MessageHandler(filters.PHOTO, set_thumbnail))
 
