@@ -12,6 +12,7 @@ from telegram.ext import (
 
 logging.basicConfig(level=logging.INFO)
 
+# Globals
 pattern = "{original}"
 file_counter = 0
 auto_rename = False
@@ -28,7 +29,7 @@ def run_flask():
     flask_app.run(host="0.0.0.0", port=port)
 
 def extract_episode(filename):
-    match = re.search(r"[eE]p?\.?\s?(\d{1,3})", filename)
+    match = re.search(r"(?:[eE]p?\.?\s?|[_\- ])(\d{1,3})", filename)
     return match.group(1) if match else None
 
 def generate_filename(original_name):
@@ -46,18 +47,15 @@ def generate_filename(original_name):
     new_name = pattern.replace("{number}", str(file_counter)).replace("{original}", base)
     return f"{new_name}{ext}"
 
-def is_video_file(name):
-    return name.lower().endswith(('.mp4', '.mkv', '.mov'))
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 *Welcome!*\n\n"
-        "Send any file (PDF, video, etc.) and I will rename it.\n\n"
-        "*Commands:*\n"
-        "`/setpattern` - Set rename pattern using `{number}`, `{original}`, `{episode}`\n"
-        "`/autorename` - Rename using episode number\n"
+        "👋 *Welcome to File Renamer Bot!*\n\n"
+        "Send me any file, and I'll rename it using your custom pattern.\n\n"
+        "Commands:\n"
+        "`/setpattern` - Set rename pattern (use `{original}`, `{number}`, `{episode}`)\n"
+        "`/autorename` - Enable episode number rename\n"
         "`/reset` - Reset counter and disable autorename\n"
-        "`/setthumb` - Send JPG/PNG to use as video thumbnail",
+        "`/setthumb` - Set thumbnail (for videos only)",
         parse_mode="Markdown"
     )
 
@@ -65,14 +63,14 @@ async def setpattern(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global pattern
     if context.args:
         pattern = " ".join(context.args)
-        await update.message.reply_text(f"✅ Pattern set to: {pattern}")
+        await update.message.reply_text(f"✅ Pattern set to:\n{pattern}")
     else:
         await update.message.reply_text("❗ Usage: /setpattern Series S01 - {episode}")
 
 async def autorename(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global auto_rename
     auto_rename = True
-    await update.message.reply_text("✅ Autorename enabled. Using episode numbers.")
+    await update.message.reply_text("✅ Autorename enabled. Will use episode number if found.")
 
 async def reset_counter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global file_counter, auto_rename
@@ -88,9 +86,12 @@ async def set_thumbnail(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file = await photo.get_file()
         await file.download_to_drive(thumb_path)
         user_thumbnail = thumb_path
-        await update.message.reply_text("✅ Default thumbnail saved for videos.")
+        await update.message.reply_text("✅ Default thumbnail set.")
     else:
         await update.message.reply_text("❗ Please send a JPG or PNG image.")
+
+def is_video_file(name):
+    return name.lower().endswith(('.mp4', '.mkv', '.mov'))
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -107,11 +108,11 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         local_path = f"{uuid.uuid4().hex}_{original_name}"
         await tg_file.download_to_drive(local_path)
 
-        caption = new_name
-        thumb = None
+        caption = new_name  # No backticks (no monospace)
 
+        thumb = None
         if is_video_file(original_name):
-            if hasattr(file, 'thumb') and file.thumb:
+            if file.thumb:
                 tg_thumb = await file.thumb.get_file()
                 thumb_path = f"thumb_{uuid.uuid4().hex}.jpg"
                 await tg_thumb.download_to_drive(thumb_path)
@@ -119,6 +120,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif user_thumbnail:
                 thumb = open(user_thumbnail, "rb")
 
+        if is_video_file(original_name):
             await context.bot.send_video(
                 chat_id=message.chat.id,
                 video=open(local_path, "rb"),
@@ -144,7 +146,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
 
-    TOKEN = "7363840731:AAE7TD7eLEs7GjbsguH70v5o2XhT89BePCM"
+    TOKEN = "YOUR_BOT_TOKEN_HERE"
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
