@@ -18,6 +18,7 @@ file_counter = 0
 auto_rename = False
 user_thumbnail = None
 
+# Flask app to keep server alive (for Replit or Render)
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
@@ -28,9 +29,10 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host="0.0.0.0", port=port)
 
+# --- Filename & Episode Handling ---
 def extract_episode(filename):
-    match = re.search(r"(?:[eE]p?\.?\s?|[_\- ])(\d{1,3})", filename)
-    return match.group(1) if match else None
+    match = re.search(r"(?:[eE]p?\.?|[_\-\s])(\d{1,3})", filename)
+    return match.group(1).zfill(2) if match else None
 
 def generate_filename(original_name):
     global file_counter, pattern, auto_rename
@@ -39,14 +41,16 @@ def generate_filename(original_name):
     if not ext:
         ext = ".mp4"
 
-    if auto_rename:
+    if auto_rename and "{episode}" in pattern:
         episode = extract_episode(base)
         if episode:
             return pattern.replace("{episode}", episode) + ext
+        else:
+            return pattern.replace("{episode}", "00") + ext  # fallback if episode not found
 
-    new_name = pattern.replace("{number}", str(file_counter)).replace("{original}", base)
-    return f"{new_name}{ext}"
+    return pattern.replace("{number}", str(file_counter)).replace("{original}", base) + ext
 
+# --- Bot Commands ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 *Welcome to File Renamer Bot!*\n\n"
@@ -65,7 +69,7 @@ async def setpattern(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pattern = " ".join(context.args)
         await update.message.reply_text(f"✅ Pattern set to:\n{pattern}")
     else:
-        await update.message.reply_text("❗ Usage: /setpattern Series S01 - {episode}")
+        await update.message.reply_text("❗ Usage: /setpattern Series S01E{episode}")
 
 async def autorename(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global auto_rename
@@ -90,6 +94,7 @@ async def set_thumbnail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❗ Please send a JPG or PNG image.")
 
+# --- File Handling ---
 def is_video_file(name):
     return name.lower().endswith(('.mp4', '.mkv', '.mov'))
 
@@ -108,16 +113,16 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         local_path = f"{uuid.uuid4().hex}_{original_name}"
         await tg_file.download_to_drive(local_path)
 
-        caption = new_name  # No backticks (no monospace)
-
+        caption = new_name
         thumb = None
+
         if is_video_file(original_name):
             if file.thumb:
                 tg_thumb = await file.thumb.get_file()
                 thumb_path = f"thumb_{uuid.uuid4().hex}.jpg"
                 await tg_thumb.download_to_drive(thumb_path)
                 thumb = open(thumb_path, "rb")
-            elif user_thumbnail:
+            elif user_thumbnail and os.path.exists(user_thumbnail):
                 thumb = open(user_thumbnail, "rb")
 
         if is_video_file(original_name):
@@ -146,7 +151,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
 
-    TOKEN = "YOUR_BOT_TOKEN_HERE"
+    TOKEN = "7363840731:AAE7TD7eLEs7GjbsguH70v5o2XhT89BePCM"
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
