@@ -4,7 +4,6 @@ import uuid
 import logging
 import json
 import threading
-from flask import Flask
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
