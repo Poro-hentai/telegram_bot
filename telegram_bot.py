@@ -143,7 +143,8 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {e}")
 
 if __name__ == "__main__":
-    threading.Thread(target=run_flask).start()
+    threading.Thread(target=run_flask).start() 
+
 
     TOKEN = os.environ.get("BOT_TOKEN", "7363840731:AAE7TD7eLEs7GjbsguH70v5o2XhT89BePCM")
     app = ApplicationBuilder().token(TOKEN).build()
