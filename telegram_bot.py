@@ -2,6 +2,7 @@ import os
 import uuid
 import logging
 import threading
+import asyncio
 from flask import Flask
 from telegram import Update, InputFile
 from telegram.ext import (
@@ -9,7 +10,6 @@ from telegram.ext import (
     ContextTypes, filters
 )
 from pdf2image import convert_from_path
-import asyncio
 
 logging.basicConfig(level=logging.INFO)
 
@@ -17,7 +17,6 @@ pattern = "{original}"
 file_counter = 0
 user_thumbnail = None
 
-# Flask app to keep Render awake
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
@@ -101,6 +100,10 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         local_path = f"{uuid.uuid4().hex}_{original_name}"
         await tg_file.download_to_drive(local_path)
 
+        if not os.path.exists(local_path):
+            await message.reply_text("❌ Download failed or file missing.")
+            return
+
         caption = new_name
         thumb = None
 
@@ -127,20 +130,21 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 os.remove(preview_path)
 
         # Send file
-        if is_video_file(original_name):
-            await context.bot.send_video(
-                chat_id=message.chat.id,
-                video=open(local_path, "rb"),
-                caption=caption,
-                thumb=thumb if thumb else None
-            )
-        else:
-            await context.bot.send_document(
-                chat_id=message.chat.id,
-                document=open(local_path, "rb"),
-                filename=new_name,
-                caption=caption
-            )
+        with open(local_path, "rb") as f:
+            if is_video_file(original_name):
+                await context.bot.send_video(
+                    chat_id=message.chat.id,
+                    video=f,
+                    caption=caption,
+                    thumb=thumb if thumb else None
+                )
+            else:
+                await context.bot.send_document(
+                    chat_id=message.chat.id,
+                    document=f,
+                    filename=new_name,
+                    caption=caption
+                )
 
         done = await message.reply_text(f"✅ Renamed to: {new_name}")
         asyncio.create_task(auto_delete(context.bot, done, delay=10))
@@ -165,5 +169,5 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_file))
     app.add_handler(MessageHandler(filters.PHOTO, set_thumbnail))
 
-    print("\U0001F680 Bot is running...")
+    print("🚀 Bot is running...")
     app.run_polling()
