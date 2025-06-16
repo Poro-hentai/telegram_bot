@@ -16,6 +16,7 @@ pattern = "{original}"
 file_counter = 0
 user_thumbnail = None
 
+# Flask app to keep Render awake
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
@@ -37,11 +38,11 @@ def generate_filename(original_name):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 *Welcome to File Renamer Bot!*\n\n"
-        "Send any file, and I'll rename it using your custom pattern.\n\n"
-        "Commands:\n"
+        "📁 Send any file, and I'll rename it using your custom pattern.\n\n"
+        "🛠️ Commands:\n"
         "`/setpattern` - Set rename pattern (use `{original}`, `{number}`)\n"
-        "`/reset` - Reset counter\n"
-        "`/setthumb` - Set thumbnail (for videos only)",
+        "`/reset` - Reset serial counter\n"
+        "`/setthumb` - Set default thumbnail (for videos only)",
         parse_mode="Markdown"
     )
 
@@ -49,14 +50,14 @@ async def setpattern(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global pattern
     if context.args:
         pattern = " ".join(context.args)
-        await update.message.reply_text(f"✅ Pattern set to:\n{pattern}")
+        await update.message.reply_text(f"✅ Pattern set to:\n`{pattern}`", parse_mode="Markdown")
     else:
         await update.message.reply_text("❗ Usage: /setpattern Series S01 - {number}")
 
 async def reset_counter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global file_counter
     file_counter = 0
-    await update.message.reply_text("🔄 Counter reset.")
+    await update.message.reply_text("🔁 Counter reset.")
 
 async def set_thumbnail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global user_thumbnail
@@ -94,7 +95,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = new_name
         thumb = None
 
-        # For videos: Use Telegram/thumb/user_thumbnail
         if is_video_file(original_name):
             if file.thumb:
                 tg_thumb = await file.thumb.get_file()
@@ -104,7 +104,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif user_thumbnail and os.path.exists(user_thumbnail):
                 thumb = open(user_thumbnail, "rb")
 
-        # For PDFs: Convert first page to image
         elif is_pdf_file(original_name):
             images = convert_from_path(local_path, first_page=1, last_page=1)
             if images:
@@ -117,7 +116,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 os.remove(preview_path)
 
-        # Send the renamed file
+        # Send file
         if is_video_file(original_name):
             await context.bot.send_video(
                 chat_id=message.chat.id,
@@ -134,7 +133,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         await message.reply_text(f"✅ Renamed to: {new_name}")
-        await status.delete()  # Auto delete "Downloading..." message
+        await status.delete()
 
         os.remove(local_path)
         if thumb and not thumb.closed:
