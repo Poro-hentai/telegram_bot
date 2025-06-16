@@ -9,6 +9,7 @@ from telegram.ext import (
     ContextTypes, filters
 )
 from pdf2image import convert_from_path
+import asyncio
 
 logging.basicConfig(level=logging.INFO)
 
@@ -77,6 +78,13 @@ def is_video_file(name):
 def is_pdf_file(name):
     return name.lower().endswith('.pdf')
 
+async def auto_delete(bot, message, delay=10):
+    await asyncio.sleep(delay)
+    try:
+        await message.delete()
+    except:
+        pass
+
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         message = update.message
@@ -85,6 +93,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         status = await message.reply_text("⬇️ Downloading...")
+        asyncio.create_task(auto_delete(context.bot, status, delay=10))
 
         tg_file = await file.get_file()
         original_name = file.file_name or "file"
@@ -109,11 +118,12 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if images:
                 preview_path = f"preview_{uuid.uuid4().hex}.jpg"
                 images[0].save(preview_path, 'JPEG')
-                await context.bot.send_photo(
+                msg = await context.bot.send_photo(
                     chat_id=message.chat.id,
                     photo=InputFile(preview_path),
                     caption="📄 PDF Preview (First Page)"
                 )
+                asyncio.create_task(auto_delete(context.bot, msg, delay=15))
                 os.remove(preview_path)
 
         # Send file
@@ -132,8 +142,8 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 caption=caption
             )
 
-        await message.reply_text(f"✅ Renamed to: {new_name}")
-        await status.delete()
+        done = await message.reply_text(f"✅ Renamed to: {new_name}")
+        asyncio.create_task(auto_delete(context.bot, done, delay=10))
 
         os.remove(local_path)
         if thumb and not thumb.closed:
@@ -143,8 +153,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error: {e}")
 
 if __name__ == "__main__":
-    threading.Thread(target=run_flask).start() 
-
+    threading.Thread(target=run_flask).start()
 
     TOKEN = os.environ.get("BOT_TOKEN", "7363840731:AAE7TD7eLEs7GjbsguH70v5o2XhT89BePCM")
     app = ApplicationBuilder().token(TOKEN).build()
@@ -156,5 +165,5 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_file))
     app.add_handler(MessageHandler(filters.PHOTO, set_thumbnail))
 
-    print("🚀 Bot is running...")
+    print("\U0001F680 Bot is running...")
     app.run_polling()
