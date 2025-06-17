@@ -1,10 +1,6 @@
-import os
-import uuid
-import logging
-import threading
-import asyncio
+import os, uuid, logging, threading, asyncio
 from flask import Flask
-from telegram import Update, InputFile, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update, InputFile
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     ContextTypes, filters
@@ -16,191 +12,173 @@ logging.basicConfig(level=logging.INFO)
 pattern = "{original}"
 file_counter = 0
 user_thumbnail = {}
-admin_id = 5759232282  # Your Telegram ID
+admin_id = 5759232282
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
-def home():
-    return "Bot is running!"
+def home(): return "Bot is running!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host="0.0.0.0", port=port)
 
-def generate_filename(original_name):
+def generate_filename(original):
     global file_counter, pattern
     file_counter += 1
-    base, ext = os.path.splitext(original_name)
-    if not ext:
-        ext = ".mp4"
+    base, ext = os.path.splitext(original)
+    if not ext: ext = ".mp4"
     return pattern.replace("{number}", str(file_counter)).replace("{original}", base) + ext
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def is_video(fn): return fn.lower().endswith((".mp4", ".mkv", ".mov"))
+def is_pdf(fn): return fn.lower().endswith(".pdf")
+
+async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 *Welcome to File Renamer Bot!*\n\n"
-        "📁 Just send any video, document, or PDF file, and I will rename it using your custom pattern.\n\n"
-        "⚙️ *Available Commands:*\n"
-        "`/setpattern` - Set rename pattern using `{original}`, `{number}`\n"
-        "`/reset` - Reset rename counter to 0\n"
-        "`/setthumb` - Set a custom thumbnail for your files\n"
-        "`/getthumb` - View your current thumbnail\n"
-        "`/delthumb` - Delete saved thumbnail\n"
-        "`/broadcast` - [Admin Only] Send message to all users\n\n"
-        "🚀 *Supported Formats:* .mp4, .mkv, .mov, .pdf, images, documents",
+        "👋 Welcome to *File Renamer Bot*!\n\n"
+        "📁 Send any file (video/document/PDF) and I'll rename it.\n\n"
+        "🛠️ Commands:\n"
+        "`/setpattern` – Set filename format `{original}` `{number}`\n"
+        "`/reset` – Reset counter\n"
+        "`/setthumb` – Upload an image as thumbnail\n"
+        "`/getthumb` – View current thumbnail\n"
+        "`/delthumb` – Delete your thumbnail\n"
+        "`/broadcast` – Admin only",
         parse_mode="Markdown"
     )
 
-async def setpattern(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def setpattern(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     global pattern
-    if context.args:
-        pattern = " ".join(context.args)
-        await update.message.reply_text(f"✅ Pattern set to:\n`{pattern}`", parse_mode="Markdown")
+    if ctx.args:
+        pattern = " ".join(ctx.args)
+        await update.message.reply_text(f"✅ Pattern set:\n`{pattern}`", parse_mode="Markdown")
     else:
-        await update.message.reply_text("❗ Usage: /setpattern NewName - {number} - {original}")
+        await update.message.reply_text("❗ Use: /setpattern File - {number} - {original}")
 
-async def reset_counter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     global file_counter
     file_counter = 0
-    await update.message.reply_text("🔁 Counter reset to 0.")
+    await update.message.reply_text("🔄 Counter reset to 0.")
 
-async def set_thumbnail(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+async def setthumb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
     file = update.message.photo[-1] if update.message.photo else update.message.document
     if file and (not update.message.document or update.message.document.mime_type.startswith("image/")):
-        thumb_path = f"thumb_{uuid.uuid4().hex}.jpg"
-        tg_file = await file.get_file()
-        await tg_file.download_to_drive(thumb_path)
-        user_thumbnail[user_id] = thumb_path
-        await update.message.reply_text("✅ Thumbnail set.")
+        path = f"thumb_{uuid.uuid4().hex}.jpg"
+        tg = await file.get_file()
+        await tg.download_to_drive(path)
+        user_thumbnail[uid] = path
+        await update.message.reply_text("✅ Thumbnail saved.")
     else:
-        await update.message.reply_text("❗ Please send a valid image (JPG/PNG).")
+        await update.message.reply_text("❗ Send a JPG/PNG image only.")
 
-async def get_thumbnail(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id in user_thumbnail and os.path.exists(user_thumbnail[user_id]):
-        await update.message.reply_photo(photo=InputFile(user_thumbnail[user_id]), caption="🖼️ Your current thumbnail")
+async def getthumb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid in user_thumbnail and os.path.exists(user_thumbnail[uid]):
+        await update.message.reply_photo(photo=InputFile(user_thumbnail[uid]), caption="🖼️ Your thumbnail")
     else:
         await update.message.reply_text("❗ No thumbnail set.")
 
-async def delete_thumbnail(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id in user_thumbnail:
-        try:
-            os.remove(user_thumbnail[user_id])
-        except:
-            pass
-        del user_thumbnail[user_id]
+async def delthumb(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid in user_thumbnail:
+        try: os.remove(user_thumbnail[uid])
+        except: pass
+        del user_thumbnail[uid]
         await update.message.reply_text("🗑️ Thumbnail deleted.")
     else:
-        await update.message.reply_text("❗ No thumbnail found.")
+        await update.message.reply_text("❗ No thumbnail to delete.")
 
-def is_video_file(name): return name.lower().endswith((".mp4", ".mkv", ".mov"))
-def is_pdf_file(name): return name.lower().endswith(".pdf")
-
-async def auto_delete(bot, message, delay=10):
+async def auto_delete(bot, msg, delay=10):
     await asyncio.sleep(delay)
-    try: await message.delete()
+    try: await msg.delete()
     except: pass
 
-async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_file(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
-        message = update.message
-        file = message.document or message.video
+        msg = update.message
+        file = msg.document or msg.video
         if not file: return
 
-        status = await message.reply_text("📥 Downloading...")
-        asyncio.create_task(auto_delete(context.bot, status))
+        notify = await msg.reply_text("📥 Downloading...")
+        asyncio.create_task(auto_delete(ctx.bot, notify))
 
-        original_name = file.file_name or "file"
-        new_name = generate_filename(original_name)
-        local_path = f"{uuid.uuid4().hex}_{original_name}"
+        orig = file.file_name or "file"
+        new_name = generate_filename(orig)
+        local = f"{uuid.uuid4().hex}_{orig}"
+        tg = await file.get_file()
+        await tg.download_to_drive(local)
 
-        tg_file = await file.get_file()
-        await tg_file.download_to_drive(local_path)
-
-        caption = new_name
         thumb = None
-        user_id = update.effective_user.id
+        uid = update.effective_user.id
+        if uid in user_thumbnail and os.path.exists(user_thumbnail[uid]):
+            thumb = InputFile(user_thumbnail[uid])
 
-        # Set thumbnail if exists
-        if is_video_file(original_name):
-            if user_id in user_thumbnail and os.path.exists(user_thumbnail[user_id]):
-                thumb = InputFile(user_thumbnail[user_id])
-
-        # PDF preview
-        if is_pdf_file(original_name):
-            images = convert_from_path(local_path, first_page=1, last_page=1)
+        # Show PDF preview
+        if is_pdf(orig):
+            images = convert_from_path(local, first_page=1, last_page=1)
             if images:
-                preview_path = f"preview_{uuid.uuid4().hex}.jpg"
-                images[0].save(preview_path, "JPEG")
-                msg = await context.bot.send_photo(
-                    chat_id=message.chat.id,
-                    photo=InputFile(preview_path),
-                    caption="📄 PDF Preview (Page 1)"
-                )
-                asyncio.create_task(auto_delete(context.bot, msg))
-                os.remove(preview_path)
+                preview = f"prev_{uuid.uuid4().hex}.jpg"
+                images[0].save(preview, "JPEG")
+                preview_msg = await ctx.bot.send_photo(chat_id=msg.chat.id, photo=InputFile(preview), caption="📄 PDF Preview")
+                asyncio.create_task(auto_delete(ctx.bot, preview_msg))
+                os.remove(preview)
 
-        with open(local_path, "rb") as f:
-            if is_video_file(original_name):
-                await context.bot.send_video(
-                    chat_id=message.chat.id,
-                    video=f,
-                    caption=caption,
+        # Send file
+        with open(local, "rb") as f:
+            if is_video(orig):
+                await ctx.bot.send_document(
+                    chat_id=msg.chat.id,
+                    document=f,
+                    caption=new_name,
+                    filename=new_name,
                     thumb=thumb
                 )
             else:
-                await context.bot.send_document(
-                    chat_id=message.chat.id,
+                await ctx.bot.send_document(
+                    chat_id=msg.chat.id,
                     document=f,
-                    caption=caption
+                    filename=new_name,
+                    caption=new_name,
+                    thumb=thumb if thumb else None
                 )
 
-        done = await message.reply_text(f"✅ Renamed to: `{new_name}`", parse_mode="Markdown")
-        asyncio.create_task(auto_delete(context.bot, done))
+        confirm = await msg.reply_text(f"✅ Renamed to:\n`{new_name}`", parse_mode="Markdown")
+        asyncio.create_task(auto_delete(ctx.bot, confirm))
+        os.remove(local)
 
-        os.remove(local_path)
     except Exception as e:
-        await update.message.reply_text(f"❌ Error: `{str(e)}`", parse_mode="Markdown")
+        await update.message.reply_text(f"❌ Error: `{e}`", parse_mode="Markdown")
 
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def broadcast(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != admin_id:
-        await update.message.reply_text("❌ You're not authorized.")
-        return
-    if not context.args:
-        await update.message.reply_text("Usage: /broadcast Your message here")
-        return
-    message = " ".join(context.args)
+        return await update.message.reply_text("❌ You're not authorized.")
+    if not ctx.args:
+        return await update.message.reply_text("Usage: /broadcast Message")
+    msg = " ".join(ctx.args)
     count = 0
-
-    try:
-        updates = await context.bot.get_updates()
-        user_ids = list({u.message.chat.id for u in updates if u.message})
-        for uid in user_ids:
-            try:
-                await context.bot.send_message(chat_id=uid, text=f"📢 Broadcast:\n{message}")
-                count += 1
-            except:
-                continue
-        await update.message.reply_text(f"✅ Broadcast sent to {count} users.")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error: {e}")
+    updates = await ctx.bot.get_updates()
+    uids = {u.message.chat.id for u in updates if u.message}
+    for uid in uids:
+        try:
+            await ctx.bot.send_message(uid, f"📢 Broadcast:\n{msg}")
+            count += 1
+        except: pass
+    await update.message.reply_text(f"✅ Sent to {count} users.")
 
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
-
     TOKEN = os.environ.get("BOT_TOKEN", "7363840731:AAE7TD7eLEs7GjbsguH70v5o2XhT89BePCM")
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("setpattern", setpattern))
-    app.add_handler(CommandHandler("reset", reset_counter))
-    app.add_handler(CommandHandler("setthumb", set_thumbnail))
-    app.add_handler(CommandHandler("getthumb", get_thumbnail))
-    app.add_handler(CommandHandler("delthumb", delete_thumbnail))
+    app.add_handler(CommandHandler("reset", reset))
+    app.add_handler(CommandHandler("setthumb", setthumb))
+    app.add_handler(CommandHandler("getthumb", getthumb))
+    app.add_handler(CommandHandler("delthumb", delthumb))
     app.add_handler(CommandHandler("broadcast", broadcast))
     app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_file))
-    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, set_thumbnail))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, setthumb))
 
-    print("🚀 Bot is running...")
+    print("🚀 Bot is live...")
     app.run_polling()
