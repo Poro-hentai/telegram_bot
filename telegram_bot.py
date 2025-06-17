@@ -7,7 +7,7 @@ from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
-    ContextTypes, filters
+    ContextTypes, filters, CallbackQueryHandler # Add CallbackQueryHandler here
 )
 import asyncio # Import asyncio for async operations like deleting messages
 
@@ -369,15 +369,13 @@ if __name__ == "__main__":
     # Register message handlers
     app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_file))
     # Handle photos specifically for setting thumbnails when replied to /setthumb
-    app.add_handler(MessageHandler(filters.PHOTO & filters.REPLY, set_thumbnail))
+    app.add_handler(MessageHandler(filters.PHOTO & filters.REPLY & filters.COMMAND('setthumb'), set_thumbnail)) # Ensure it's a reply to a photo AND has the /setthumb command
     
     # Register callback query handler for inline keyboard buttons
-    app.add_handler(MessageHandler(filters.PHOTO & filters.REPLY, set_thumbnail)) # For /setthumb replies
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND & ~filters.PHOTO & ~filters.VIDEO & ~filters.Document.ALL, lambda u, c: None)) # Ignore other message types silently
+    app.add_handler(CallbackQueryHandler(button_callback_handler)) # Corrected line
+
+    # Ignore other message types silently
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND & ~filters.PHOTO & ~filters.VIDEO & ~filters.Document.ALL, lambda u, c: None))
     
-    # Register callback query handler for inline keyboard buttons
-    app.add_handler(app.add_handler(CallbackQueryHandler(button_callback_handler)))
-
-
     logger.info("🚀 Bot is running and polling for updates...")
     app.run_polling(drop_pending_updates=True)
