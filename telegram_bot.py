@@ -4,7 +4,7 @@ import logging
 import threading
 import asyncio
 from flask import Flask
-from telegram import Update, InputFile
+from telegram import Update, InputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     ContextTypes, filters
@@ -15,8 +15,8 @@ logging.basicConfig(level=logging.INFO)
 
 pattern = "{original}"
 file_counter = 0
-user_thumbnail = None
-admin_id = 5759232282  # Only this ID can broadcast
+user_thumbnail = {}  # user_id: file_path
+admin_id = 5759232282  # Your Telegram user ID for admin-only features
 
 flask_app = Flask(__name__)
 
@@ -43,7 +43,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🛠️ Commands:\n"
         "`/setpattern` - Set rename pattern (use `{original}`, `{number}`)\n"
         "`/reset` - Reset serial counter\n"
-        "`/setthumb` - Set default thumbnail (for videos only)\n"
+        "`/setthumb` - Set default thumbnail (works for any file)\n"
+        "`/getthumb` - Get current thumbnail\n"
+        "`/delthumb` - Delete current thumbnail\n"
         "`/broadcast` - Admin only broadcast",
         parse_mode="Markdown"
     )
@@ -62,28 +64,47 @@ async def reset_counter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔁 Counter reset.")
 
 async def set_thumbnail(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global user_thumbnail
+    user_id = update.effective_user.id
     if update.message.photo:
         photo = update.message.photo[-1]
         thumb_path = f"thumb_{uuid.uuid4().hex}.jpg"
         file = await photo.get_file()
         await file.download_to_drive(thumb_path)
-        user_thumbnail = thumb_path
-        await update.message.reply_text("✅ Default thumbnail set.")
+        user_thumbnail[user_id] = thumb_path
+        await update.message.reply_text("✅ Thumbnail set for your uploads.")
     elif update.message.document and update.message.document.mime_type.startswith("image"):
-        file = await update.message.document.get_file()
         thumb_path = f"thumb_{uuid.uuid4().hex}.jpg"
+        file = await update.message.document.get_file()
         await file.download_to_drive(thumb_path)
-        user_thumbnail = thumb_path
-        await update.message.reply_text("✅ Default thumbnail set.")
+        user_thumbnail[user_id] = thumb_path
+        await update.message.reply_text("✅ Thumbnail set for your uploads.")
     else:
-        await update.message.reply_text("❗ Please send an image file (JPG/PNG).")
+        await update.message.reply_text("❗ Send a valid image file (JPG/PNG).")
+
+async def get_thumbnail(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id in user_thumbnail and os.path.exists(user_thumbnail[user_id]):
+        await update.message.reply_photo(photo=InputFile(user_thumbnail[user_id]), caption="🖼️ Your current thumbnail")
+    else:
+        await update.message.reply_text("❗ No thumbnail set.")
+
+async def delete_thumbnail(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id in user_thumbnail:
+        try:
+            os.remove(user_thumbnail[user_id])
+        except:
+            pass
+        del user_thumbnail[user_id]
+        await update.message.reply_text("🗑️ Thumbnail deleted.")
+    else:
+        await update.message.reply_text("❗ No thumbnail to delete.")
 
 def is_video_file(name):
-    return name.lower().endswith(('.mp4', '.mkv', '.mov'))
+    return name.lower().endswith((".mp4", ".mkv", ".mov"))
 
 def is_pdf_file(name):
-    return name.lower().endswith('.pdf')
+    return name.lower().endswith(".pdf")
 
 async def auto_delete(bot, message, delay=10):
     await asyncio.sleep(delay)
@@ -114,17 +135,19 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         caption = new_name
         thumb = None
+        thumb_path = None
+        user_id = update.effective_user.id
 
-        if is_video_file(original_name):
-            if file.thumb:
-                tg_thumb = await file.thumb.get_file()
-                thumb_path = f"thumb_{uuid.uuid4().hex}.jpg"
-                await tg_thumb.download_to_drive(thumb_path)
-                thumb = open(thumb_path, "rb")
-            elif user_thumbnail and os.path.exists(user_thumbnail):
-                thumb = open(user_thumbnail, "rb")
+        if is_video_file(original_name) and file.thumb:
+            tg_thumb = await file.thumb.get_file()
+            thumb_path = f"thumb_{uuid.uuid4().hex}.jpg"
+            await tg_thumb.download_to_drive(thumb_path)
+            thumb = open(thumb_path, "rb")
+        elif user_id in user_thumbnail and os.path.exists(user_thumbnail[user_id]):
+            thumb_path = user_thumbnail[user_id]
+            thumb = open(thumb_path, "rb")
 
-        elif is_pdf_file(original_name):
+        if is_pdf_file(original_name):
             images = convert_from_path(local_path, first_page=1, last_page=1)
             if images:
                 preview_path = f"preview_{uuid.uuid4().hex}.jpg"
@@ -158,8 +181,9 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(auto_delete(context.bot, done, delay=10))
 
         os.remove(local_path)
-        if thumb and not thumb.closed:
+        if thumb and not thumb.closed and thumb_path and "thumb_" in thumb_path:
             thumb.close()
+            os.remove(thumb_path)
 
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
@@ -189,6 +213,8 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("setpattern", setpattern))
     app.add_handler(CommandHandler("reset", reset_counter))
     app.add_handler(CommandHandler("setthumb", set_thumbnail))
+    app.add_handler(CommandHandler("getthumb", get_thumbnail))
+    app.add_handler(CommandHandler("delthumb", delete_thumbnail))
     app.add_handler(CommandHandler("broadcast", broadcast))
     app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_file))
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, set_thumbnail))
