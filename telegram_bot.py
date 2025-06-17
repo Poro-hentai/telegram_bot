@@ -16,6 +16,7 @@ logging.basicConfig(level=logging.INFO)
 pattern = "{original}"
 file_counter = 0
 user_thumbnail = None
+admin_id = 5759232282  # Only this ID can broadcast
 
 flask_app = Flask(__name__)
 
@@ -42,7 +43,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🛠️ Commands:\n"
         "`/setpattern` - Set rename pattern (use `{original}`, `{number}`)\n"
         "`/reset` - Reset serial counter\n"
-        "`/setthumb` - Set default thumbnail (for videos only)",
+        "`/setthumb` - Set default thumbnail (for videos only)\n"
+        "`/broadcast` - Admin only broadcast",
         parse_mode="Markdown"
     )
 
@@ -68,8 +70,14 @@ async def set_thumbnail(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await file.download_to_drive(thumb_path)
         user_thumbnail = thumb_path
         await update.message.reply_text("✅ Default thumbnail set.")
+    elif update.message.document and update.message.document.mime_type.startswith("image"):
+        file = await update.message.document.get_file()
+        thumb_path = f"thumb_{uuid.uuid4().hex}.jpg"
+        await file.download_to_drive(thumb_path)
+        user_thumbnail = thumb_path
+        await update.message.reply_text("✅ Default thumbnail set.")
     else:
-        await update.message.reply_text("❗ Please send a JPG or PNG image.")
+        await update.message.reply_text("❗ Please send an image file (JPG/PNG).")
 
 def is_video_file(name):
     return name.lower().endswith(('.mp4', '.mkv', '.mov'))
@@ -129,7 +137,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 asyncio.create_task(auto_delete(context.bot, msg, delay=15))
                 os.remove(preview_path)
 
-        # Send file
         with open(local_path, "rb") as f:
             if is_video_file(original_name):
                 await context.bot.send_video(
@@ -143,7 +150,8 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat_id=message.chat.id,
                     document=f,
                     filename=new_name,
-                    caption=caption
+                    caption=caption,
+                    thumb=thumb if thumb else None
                 )
 
         done = await message.reply_text(f"✅ Renamed to: {new_name}")
@@ -156,6 +164,21 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
 
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != admin_id:
+        await update.message.reply_text("❌ You are not authorized to use this command.")
+        return
+    if not context.args:
+        await update.message.reply_text("❗ Usage: /broadcast Your message here")
+        return
+    text = " ".join(context.args)
+    async for dialog in context.bot.get_dialogs():
+        try:
+            await context.bot.send_message(chat_id=dialog.chat.id, text=f"📢 Broadcast:\n{text}")
+        except:
+            continue
+    await update.message.reply_text("✅ Broadcast sent.")
+
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
 
@@ -166,8 +189,9 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("setpattern", setpattern))
     app.add_handler(CommandHandler("reset", reset_counter))
     app.add_handler(CommandHandler("setthumb", set_thumbnail))
+    app.add_handler(CommandHandler("broadcast", broadcast))
     app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_file))
-    app.add_handler(MessageHandler(filters.PHOTO, set_thumbnail))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, set_thumbnail))
 
     print("🚀 Bot is running...")
     app.run_polling()
