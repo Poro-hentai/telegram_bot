@@ -1,174 +1,228 @@
-import os
-import json
+import os, json, asyncio
 from flask import Flask
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup
+)
 from telegram.ext import (
-    Application, CommandHandler, CallbackQueryHandler,
-    MessageHandler, filters, ContextTypes
+    Application, CommandHandler, MessageHandler, filters,
+    CallbackQueryHandler, ContextTypes, ConversationHandler
 )
 
 BOT_TOKEN = "7657397566:AAFKTEJnkSljny1wzRFF3NJHEtV3fKbTpDA"
 DATA_FILE = "channels.json"
-
+POST_DATA = {}
 app = Flask(__name__)
 
-# Data Functions
+# -- Data utils --
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {}
     with open(DATA_FILE, "r") as f:
-        return json.load(f)
-
-def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
-# /start command
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    data = load_data()
-    if not data.get(user_id):
-        await update.message.reply_text("❌ No channels found. Please add a channel first by using ➕ Add Channel.")
-    
-    btn = InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Add Channel", callback_data="add_channel")],
-        [InlineKeyboardButton("📢 My Channels", callback_data="my_channels")],
-        [InlineKeyboardButton("📝 Create Post", callback_data="create_post")],
-        [InlineKeyboardButton("❌ Close", callback_data="close")],
-    ])
-    await update.message.reply_text("👋 Welcome to Controller Bot Clone!\nChoose an action:", reply_markup=btn)
-
-# Callback handler
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = str(query.from_user.id)
-    data = load_data()
-
-    if query.data == "add_channel":
-        context.user_data.clear()
-        context.user_data["awaiting_channel"] = True
-        await query.edit_message_text("Send your channel username (e.g., @mychannel):")
-
-    elif query.data == "my_channels":
-        channels = data.get(user_id, [])
-        text = "\n".join(channels) if channels else "❌ No channels added."
-        await query.edit_message_text(f"📢 Your Channels:\n{text}")
-
-    elif query.data == "create_post":
-        if not data.get(user_id):
-            await query.edit_message_text("❌ Please add at least one channel before creating a post.")
-            return
-        context.user_data.clear()
-        context.user_data["step"] = "choose_channel"
-        btns = [[InlineKeyboardButton(ch, callback_data=f"select_{ch}")] for ch in data[user_id]]
-        await query.edit_message_text("Select channel to post:", reply_markup=InlineKeyboardMarkup(btns))
-
-    elif query.data == "close":
-        await query.message.delete()
-
-    elif query.data.startswith("select_"):
-        channel = query.data.replace("select_", "")
-        context.user_data["post_channel"] = channel
-        context.user_data["step"] = "awaiting_post"
-        await query.edit_message_text("Send the message you want to post (text, image, or video):")
-
-    elif query.data == "confirm_post":
-        channel = context.user_data.get("post_channel")
-        msg = context.user_data.get("preview")
-        btn = context.user_data.get("keyboard")
-        media = context.user_data.get("media")
         try:
-            if media:
-                await context.bot.send_photo(chat_id=channel, photo=media, caption=msg, reply_markup=btn)
-            else:
-                await context.bot.send_message(chat_id=channel, text=msg, reply_markup=btn)
-            await query.edit_message_text("✅ Post sent successfully!")
-        except Exception as e:
-            await query.edit_message_text(f"❌ Failed to send post.\n{e}")
+            return json.load(f)
+        except:
+            return {}
 
-    elif query.data == "cancel_post":
-        await query.edit_message_text("❌ Post cancelled.")
+def save_data(d):
+    with open(DATA_FILE, "w") as f:
+        json.dump(d, f, indent=2)
 
-# Message Handler
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
+# -- Conversation states --
+SELECT_CHANNEL, ENTER_CONTENT, ENTER_BUTTONS = range(3)
+
+# -- Commands --
+
+async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await ctx.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=(
+            "👋 Welcome to Controller Bot!\n\n"
+            "Use the buttons below to manage channels and posts."
+        ),
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("➕ Add Channel", callback_data="add_channel")],
+            [InlineKeyboardButton("📝 Create Post", callback_data="create_post")],
+            [InlineKeyboardButton("📢 My Channels", callback_data="my_channels")],
+            [InlineKeyboardButton("❌ Close", callback_data="close")]
+        ])
+    )
+
+async def help_command(update: Update, ctx):
+    await update.message.reply_text(
+        "ℹ️ *Help Menu*\n\n"
+        "/start – Open control menu\n"
+        "/help – Show this help\n\n"
+        "*Create Post Workflow:*\n"
+        "1. Add channel\n"
+        "2. Tap Create Post\n"
+        "3. Choose channel\n"
+        "4. Send text or media\n"
+        "5. Send buttons:\n"
+        "`Button 1 - https://link1.com`\n"
+        "`Button 2 - https://link2.com`\n"
+        "`⬇️ Download - https://download.com`\n"
+        "(First 2 = top row, others = below)\n"
+        "6. Preview and confirm send",
+        parse_mode="Markdown"
+    )
+
+# -- Button callback handling --
+
+async def callback_handler(update: Update, ctx):
+    q = update.callback_query
+    await q.answer()
+    user = str(q.from_user.id)
     data = load_data()
 
-    if context.user_data.get("awaiting_channel"):
-        channel = update.message.text.strip()
-        if not channel.startswith("@"):  
-            await update.message.reply_text("❌ Invalid format. Must start with @")
+    if q.data == "add_channel":
+        ctx.user_data["await_channel"] = True
+        msg = await q.edit_message_text("Send channel username (e.g. @yourchannel):")
+        ctx.user_data["prompt_msg"] = msg
+
+    elif q.data == "my_channels":
+        chs = data.get(user, [])
+        msg = "\n".join(chs) if chs else "🚫 No channels."
+        msg_obj = await q.edit_message_text(f"📢 Your Channels:\n{msg}")
+        ctx.user_data["prompt_msg"] = msg_obj
+
+    elif q.data == "create_post":
+        chs = data.get(user, [])
+        if not chs:
+            msg_obj = await q.edit_message_text("❗ Add a channel first!")
+            ctx.user_data["prompt_msg"] = msg_obj
             return
-        data.setdefault(user_id, [])
-        if channel not in data[user_id]:
-            data[user_id].append(channel)
-            save_data(data)
-            await update.message.reply_text(f"✅ Channel {channel} added.")
-        else:
-            await update.message.reply_text("⚠️ Channel already exists.")
-        context.user_data.clear()
-        return
-
-    if context.user_data.get("step") == "awaiting_post":
-        context.user_data["step"] = "awaiting_button"
-        context.user_data["media"] = None
-        if update.message.photo:
-            file_id = update.message.photo[-1].file_id
-            context.user_data["media"] = file_id
-        elif update.message.video:
-            file_id = update.message.video.file_id
-            context.user_data["media"] = file_id
-
-        context.user_data["preview"] = update.message.caption or update.message.text
-        await update.message.reply_text(
-            "Now send button text and URL in this format:\n\n```
-Button 1 - https://link1.com\nButton 2 - https://link2.com
-```\n\nSend `skip` to continue without buttons.",
-            parse_mode="Markdown"
+        keyboards = [[InlineKeyboardButton(ch, callback_data=f"select_{ch}")] for ch in chs]
+        msg_obj = await q.edit_message_text(
+            "Select a channel to post to:",
+            reply_markup=InlineKeyboardMarkup(keyboards)
         )
+        ctx.user_data["prompt_msg"] = msg_obj
+
+    elif q.data.startswith("select_"):
+        ch = q.data.split("_",1)[1]
+        ctx.user_data["channel"] = ch
+        msg_obj = await q.edit_message_text(f"Posting to **{ch}**. Now send content (text/media):", parse_mode="Markdown")
+        ctx.user_data["prompt_msg"] = msg_obj
+        return ENTER_CONTENT
+
+    elif q.data == "close":
+        await q.message.delete()
+
+    elif q.data == "confirm":
+        u = user
+        post = POST_DATA.get(u)
+        if not post:
+            await q.edit_message_text("🚫 No post data.")
+            return ConversationHandler.END
+        try:
+            await ctx.bot.send_message(
+                chat_id=post["channel"],
+                text=post["text"],
+                reply_markup=post["buttons"],
+                parse_mode="HTML"
+            ) if not post["media"] else await ctx.bot.send_photo(
+                chat_id=post["channel"],
+                photo=post["media"],
+                caption=post["text"],
+                reply_markup=post["buttons"],
+                parse_mode="HTML"
+            )
+            await q.edit_message_text("✅ Posted successfully!")
+        except Exception as e:
+            await q.edit_message_text(f"❌ Failed:\n{e}")
+        POST_DATA.pop(u, None)
+        return ConversationHandler.END
+
+# -- Message handlers --
+
+async def handle_text(update: Update, ctx):
+    msg_id = ctx.user_data.pop("prompt_msg", None)
+    if msg_id:
+        await msg_id.delete()
+    user = str(update.message.from_user.id)
+    data = load_data()
+
+    if ctx.user_data.get("await_channel"):
+        ch = update.message.text.strip()
+        if not ch.startswith("@"):
+            return await update.message.reply_text("❌ Must start with @")
+        data.setdefault(user, [])
+        if ch not in data[user]:
+            data[user].append(ch)
+            save_data(data)
+            await update.message.reply_text(f"✅ Added {ch}")
+        else:
+            await update.message.reply_text("⚠️ Already added.")
+        ctx.user_data.pop("await_channel", None)
         return
 
-    if context.user_data.get("step") == "awaiting_button":
-        btn_text = update.message.text
-        keyboard = []
+async def handle_content(update: Update, ctx):
+    user = str(update.message.from_user.id)
+    ch = ctx.user_data.get("channel")
+    if not ch:
+        return ConversationHandler.END
+    text = update.message.text or update.message.caption or ""
+    media = None
+    if update.message.photo:
+        media = update.message.photo[-1].file_id
+    elif update.message.document:
+        media = update.message.document.file_id
+    POST_DATA[user] = {"channel": ch, "text": text, "media": media}
+    prompt = await update.message.reply_text(
+        "Send buttons:\n`Btn1 - URL1`\n`Btn2 - URL2`\n`⬇️ Download - URL…`",
+        parse_mode="Markdown"
+    )
+    ctx.user_data["btn_prompt"] = prompt
+    return ENTER_BUTTONS
 
-        if btn_text.lower() != "skip":
-            for line in btn_text.strip().split("\n"):
-                if " - " in line:
-                    text, url = line.split(" - ", 1)
-                    keyboard.append([InlineKeyboardButton(text.strip(), url=url.strip())])
+async def handle_buttons(update: Update, ctx):
+    pm = ctx.user_data.pop("btn_prompt", None)
+    if pm:
+        await pm.delete()
+    user = str(update.message.from_user.id)
+    lines = update.message.text.splitlines()
+    rows, current = [], []
+    for line in lines:
+        if "-" not in line: continue
+        t, u = line.split("-",1)
+        current.append(InlineKeyboardButton(t.strip(), url=u.strip()))
+        if len(current)==2:
+            rows.append(current); current=[]
+    if current: rows.append(current)
+    POST_DATA[user]["buttons"] = InlineKeyboardMarkup(rows)
+    post = POST_DATA[user]
+    if post["media"]:
+        preview = await update.message.reply_photo(post["media"], caption=post["text"], reply_markup=post["buttons"])
+    else:
+        preview = await update.message.reply_text(post["text"], reply_markup=post["buttons"])
+    await preview.reply_text("✅ Preview above. Tap Confirm:", reply_markup=InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Confirm", callback_data="confirm")]
+    ]))
+    return ConversationHandler.END
 
-        reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-        context.user_data["keyboard"] = reply_markup
-
-        msg = context.user_data["preview"]
-        media = context.user_data.get("media")
-
-        if media:
-            await update.message.reply_photo(photo=media, caption=msg, reply_markup=reply_markup)
-        else:
-            await update.message.reply_text(msg, reply_markup=reply_markup)
-
-        btn = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Confirm", callback_data="confirm_post"),
-             InlineKeyboardButton("❌ Cancel", callback_data="cancel_post")]
-        ])
-        await update.message.reply_text("Do you want to post this to the selected channel?", reply_markup=btn)
-        context.user_data["step"] = "preview_done"
-
+# -- Flask root --
 @app.route("/")
-def home():
-    return "Bot is running"
+def root(): return "Bot running."
 
-if __name__ == '__main__':
-    from telegram.ext import ApplicationBuilder
+# -- Main run --
+if __name__ == "__main__":
     import threading
+    app_bot = Application.builder().token(BOT_TOKEN).build()
 
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(handle_callback))
-    application.add_handler(MessageHandler(filters.TEXT | filters.PHOTO | filters.VIDEO, handle_message))
+    conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(callback_handler, pattern="^select_")],
+        states={
+            ENTER_CONTENT: [MessageHandler(filters.ALL & filters.ChatType.PRIVATE, handle_content)],
+            ENTER_BUTTONS: [MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, handle_buttons)]
+        },
+        fallbacks=[]
+    )
 
-    threading.Thread(target=app.run, kwargs={"host": "0.0.0.0", "port": int(os.environ.get("PORT", 5000))}).start()
-    application.run_polling()
+    app_bot.add_handler(CommandHandler("start", start))
+    app_bot.add_handler(CommandHandler("help", help_command))
+    app_bot.add_handler(CallbackQueryHandler(callback_handler))
+    app_bot.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, handle_text))
+    app_bot.add_handler(conv)
+
+    threading.Thread(target=app.run, kwargs={"host":"0.0.0.0","port":int(os.getenv("PORT",5000))}).start()
+    app_bot.run_polling()
