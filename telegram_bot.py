@@ -1,7 +1,8 @@
-import os, json
+import os
+import json
 from flask import Flask
 from telegram import (
-    Update, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
+    Update, InlineKeyboardMarkup, InlineKeyboardButton
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters,
@@ -13,18 +14,21 @@ DATA_FILE = "channels.json"
 
 app = Flask(__name__)
 
-# Load or init data
+# Load or initialize data
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {}
     with open(DATA_FILE, "r") as f:
-        return json.load(f)
+        try:
+            return json.load(f)
+        except json.JSONDecodeError:
+            return {}
 
 def save_data(data):
     with open(DATA_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-# Start
+# /start command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     btn = InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Add Channel", callback_data="add_channel")],
@@ -34,7 +38,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
     await update.message.reply_text("👋 Welcome to Controller Bot!\nChoose an action below:", reply_markup=btn)
 
-# Add Channel
+# Handle callback buttons
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -42,7 +46,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "add_channel":
         context.user_data["awaiting_channel"] = True
-        await query.edit_message_text("Send your channel username (e.g., @mychannel):")
+        await query.edit_message_text("📨 Send your channel username (e.g., @mychannel):")
     elif query.data == "my_channels":
         data = load_data()
         channels = data.get(user_id, [])
@@ -50,11 +54,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"📢 Your Channels:\n{text}")
     elif query.data == "post":
         context.user_data["awaiting_post"] = True
-        await query.edit_message_text("Send the message you want to post to all your channels:")
+        await query.edit_message_text("📝 Send the message you want to post to all your channels:")
     elif query.data == "close":
         await query.message.delete()
 
-# Add channel from user input
+# Handle text for channel input and post message
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.message.from_user.id)
     data = load_data()
@@ -91,25 +95,26 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ Posted to {sent_count} channel(s).")
         context.user_data["awaiting_post"] = False
 
-# Like callback
+# Like button handler
 async def like_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer("❤️ Thanks for liking!")
 
-# Flask root
+# Flask route
 @app.route('/')
 def home():
     return "Bot is Live!"
 
-# Run bot
+# Main bot + flask run
 if __name__ == "__main__":
     from telegram.ext import ApplicationBuilder
     import threading
 
     app_bot = ApplicationBuilder().token(BOT_TOKEN).build()
+
     app_bot.add_handler(CommandHandler("start", start))
     app_bot.add_handler(CallbackQueryHandler(handle_callback, pattern="^(add_channel|my_channels|post|close)$"))
     app_bot.add_handler(CallbackQueryHandler(like_callback, pattern="^like$"))
-    app_bot.add_handler(MessageHandler(filters.TEXT & filters.PRIVATE, handle_text))
+    app_bot.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, handle_text))
 
     threading.Thread(target=app.run, kwargs={"host": "0.0.0.0", "port": int(os.environ.get("PORT", 5000))}).start()
     app_bot.run_polling()
