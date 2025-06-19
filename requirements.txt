@@ -1,8 +1,6 @@
-python-telegram-bot==20.7
 Flask==2.3.3
-requests
-pillow
-fitz
+python-telegram-bot==20.7
 PyMuPDF==1.26.1
-
-pdf2image
+pdf2image==1.17.0
+pillow==11.2.1
+requests==2.32.4
