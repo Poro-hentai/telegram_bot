@@ -2,7 +2,8 @@ import os
 import json
 import uuid
 import logging
-import fitz  # PyMuPDF
+import fitz  # this is correct, but only if PyMuPDF is correctly installed
+
 import requests
 from PIL import Image
 from flask import Flask
