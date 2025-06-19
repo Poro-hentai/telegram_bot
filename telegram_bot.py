@@ -1,33 +1,23 @@
 import os
 import re
 import uuid
+import json
 import logging
 import threading
 import requests
 from flask import Flask
-from telegram import Update
+from PIL import Image
+from io import BytesIO
+from telegram import Update, InputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler,
-    ContextTypes, filters
+    ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
 )
 
-# Logging setup
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# === Logging Setup ===
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Global variables
-pattern = "{original}_{number}"
-file_counter = 0
-user_thumbnail = None
-
-# Thumbnail URL (permanent)
-THUMBNAIL_URL = "https://telegra.ph/file/9d18345731db88fff4f8c-d2b3920631195c5747.jpg"
-THUMBNAIL_PATH = "fixed_thumb.jpg"
-
-# Flask app for Render
+# === Flask App (for Render keep-alive) ===
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
@@ -38,127 +28,165 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host="0.0.0.0", port=port)
 
-# Helpers
+# === Global Variables ===
+pattern = "{original}_{number}"
+file_counter = 0
+THUMB_FILE = "thumbs.json"
+thumbnails_dir = "thumbnails"
+os.makedirs(thumbnails_dir, exist_ok=True)
+
+# === Helper Functions ===
+def load_thumbs():
+    return json.load(open(THUMB_FILE)) if os.path.exists(THUMB_FILE) else {}
+
+def save_thumbs(data):
+    with open(THUMB_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
 def generate_filename(original_name: str) -> str:
     global file_counter, pattern
     file_counter += 1
     base, ext = os.path.splitext(original_name)
-    ext = ext if ext.startswith('.') else '.' + ext
-    if not ext:
-        ext = ".mp4"
-    cleaned_base = re.sub(r'[<>:"/\\|?*]', '', base)
-    return pattern.replace("{number}", str(file_counter)).replace("{original}", cleaned_base) + ext
+    ext = ext if ext.startswith('.') else f'.{ext}'
+    base = re.sub(r'[<>:"/\\|?*]', '', base)
+    return pattern.replace("{original}", base).replace("{number}", str(file_counter)) + ext
 
-def is_video_file(filename: str) -> bool:
-    return filename.lower().endswith(('.mp4', '.mkv', '.mov', '.avi', '.webm'))
+def download_and_convert_jpg(url, path):
+    r = requests.get(url)
+    img = Image.open(BytesIO(r.content)).convert("RGB")
+    img.save(path, "JPEG")
 
-def ensure_thumbnail():
-    os.makedirs("thumbnails", exist_ok=True)
-    if not os.path.exists(THUMBNAIL_PATH):
-        with open(THUMBNAIL_PATH, "wb") as f:
-            f.write(requests.get(THUMBNAIL_URL).content)
-    return open(THUMBNAIL_PATH, "rb")
-
-# Commands
+# === Commands ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👋 *Welcome to File Renamer Bot!*\n\n"
-        "Send me any file, and I'll rename it using your custom pattern.\n\n"
-        "`/setpattern <pattern>` - Use `{original}` and `{number}`\n"
-        "`/reset` - Reset counter\n"
-        "`/help` - Show help again",
-        parse_mode="Markdown"
-    )
+    buttons = [
+        [InlineKeyboardButton("About", callback_data="about"),
+         InlineKeyboardButton("Help", callback_data="help")],
+        [InlineKeyboardButton("Close", callback_data="close")]
+    ]
+    caption = "\ud83d\udc4b *Welcome to File Renamer Bot!*\nSend me any video, document or PDF, and I'll rename it!\nUse /setthumburl to set your own thumbnail using a Telegra.ph image URL."
+    media_url = "https://telegra.ph/file/9d18345731db88fff4f8c-d2b3920631195c5747.jpg"
+    await update.message.reply_photo(photo=media_url, caption=caption, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
 
-async def setpattern(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global pattern
-    if context.args:
-        new_pattern = " ".join(context.args)
-        if "{original}" not in new_pattern and "{number}" not in new_pattern:
-            await update.message.reply_text("⚠️ Pattern should include `{original}` or `{number}`.")
-        else:
-            pattern = new_pattern
-            await update.message.reply_text(f"✅ Pattern set to:\n`{pattern}`", parse_mode="Markdown")
-    else:
-        await update.message.reply_text(
-            "❗ Usage: `/setpattern MySeries - {number} - {original}`", parse_mode="Markdown"
+async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "about":
+        buttons = [[InlineKeyboardButton("\u2b05\ufe0f Back", callback_data="back")], [InlineKeyboardButton("Close", callback_data="close")]]
+        await query.edit_message_caption(
+            caption="\ud83d\udcc5 *About Us*\n\nWe are a simple file renamer bot for Telegram users.\n\nMade with \u2764\ufe0f by @YourChannel",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(buttons)
         )
+    elif query.data == "help":
+        await query.edit_message_caption(
+            caption="\u2753 *Help Menu*\n\n/setpattern <pattern>\n/setthumburl <telegra.ph URL>\n/deletethumb\n/reset",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u2b05\ufe0f Back", callback_data="back")], [InlineKeyboardButton("Close", callback_data="close")]])
+        )
+    elif query.data == "back":
+        await start(update, context)
+    elif query.data == "close":
+        await query.message.delete()
+
+async def set_thumb_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("❗ Usage: /setthumburl <Telegra.ph URL>")
+        return
+    url = context.args[0]
+    if not url.startswith("https://telegra.ph/"):
+        await update.message.reply_text("❌ Only Telegra.ph image links are supported.")
+        return
+    thumbs = load_thumbs()
+    user_id = str(update.effective_user.id)
+    thumbs[user_id] = url
+    save_thumbs(thumbs)
+    thumb_path = f"{thumbnails_dir}/{user_id}.jpg"
+    download_and_convert_jpg(url, thumb_path)
+    await update.message.reply_text("✅ Thumbnail saved and set successfully!")
+
+async def delete_thumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    thumbs = load_thumbs()
+    if user_id in thumbs:
+        thumbs.pop(user_id)
+        save_thumbs(thumbs)
+        path = f"{thumbnails_dir}/{user_id}.jpg"
+        if os.path.exists(path): os.remove(path)
+        await update.message.reply_text("🗑️ Your thumbnail has been deleted.")
+    else:
+        await update.message.reply_text("ℹ️ You don't have a thumbnail set.")
 
 async def reset_counter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global file_counter
     file_counter = 0
-    await update.message.reply_text("🔄 File counter has been reset to 0.")
+    await update.message.reply_text("🔄 Counter reset to 0.")
 
-# File handler
+# === File Handler ===
+def is_video(filename):
+    return filename.lower().endswith((".mp4", ".mkv", ".avi", ".webm"))
+
+def is_pdf(filename):
+    return filename.lower().endswith(".pdf")
+
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.message
-    file = message.document or message.video
-
+    file = update.message.document or update.message.video
     if not file:
-        await message.reply_text("❗ Send a document or video to rename.")
+        await update.message.reply_text("❗ Send a document or video file.")
         return
 
-    status = await message.reply_text("⬇️ Downloading...")
+    status = await update.message.reply_text("⬇️ Downloading...")
+    user_id = str(update.effective_user.id)
+    original_name = file.file_name or "unnamed"
+    new_name = generate_filename(original_name)
+    local_path = f"downloads/{uuid.uuid4().hex}_{original_name}"
+    os.makedirs("downloads", exist_ok=True)
+
+    tg_file = await file.get_file()
+    await tg_file.download_to_drive(local_path)
+    await status.edit_text("⬆️ Uploading...")
+
+    thumb = None
+    thumb_path = f"{thumbnails_dir}/{user_id}.jpg"
+    if os.path.exists(thumb_path):
+        thumb = open(thumb_path, "rb")
 
     try:
-        tg_file = await file.get_file()
-        original_name = file.file_name or "file"
-        new_name = generate_filename(original_name)
-
-        temp_dir = "downloads"
-        os.makedirs(temp_dir, exist_ok=True)
-        local_path = os.path.join(temp_dir, f"{uuid.uuid4().hex}_{original_name}")
-        await tg_file.download_to_drive(local_path)
-
-        await status.edit_text("⬆️ Uploading...")
-
-        caption = f"{new_name}"
-        thumb_file = ensure_thumbnail()
-
-        if is_video_file(original_name):
+        if is_video(original_name):
             await context.bot.send_video(
-                chat_id=message.chat.id,
+                chat_id=update.effective_chat.id,
                 video=open(local_path, "rb"),
-                caption=caption,
-                thumbnail=thumb_file,
+                caption=new_name,
+                thumbnail=thumb,
                 supports_streaming=True
             )
         else:
             await context.bot.send_document(
-                chat_id=message.chat.id,
+                chat_id=update.effective_chat.id,
                 document=open(local_path, "rb"),
                 filename=new_name,
-                caption=caption,
-                thumbnail=thumb_file
+                caption=new_name,
+                thumbnail=thumb if is_pdf(original_name) else None
             )
-
-        await status.delete()
-
+        await status.edit_text("✅ Done! File renamed and sent.")
     except Exception as e:
-        logger.error(f"Error: {e}", exc_info=True)
-        await status.edit_text(f"❌ Error:\n`{e}`", parse_mode="Markdown")
-
+        await status.edit_text(f"❌ Error: {e}")
     finally:
-        try:
-            if os.path.exists(local_path):
-                os.remove(local_path)
-            if thumb_file and not thumb_file.closed:
-                thumb_file.close()
-        except Exception as e:
-            logger.warning(f"Cleanup error: {e}")
+        if os.path.exists(local_path): os.remove(local_path)
+        if thumb: thumb.close()
 
-# Main bot setup
+# === Bot Init ===
 if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
-
     TOKEN = "7363840731:AAE7TD7eLEs7GjbsguH70v5o2XhT89BePCM"
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", start))
-    app.add_handler(CommandHandler("setpattern", setpattern))
+    app.add_handler(CommandHandler("setthumburl", set_thumb_url))
+    app.add_handler(CommandHandler("deletethumb", delete_thumb))
     app.add_handler(CommandHandler("reset", reset_counter))
+    app.add_handler(CallbackQueryHandler(handle_buttons))
     app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_file))
 
-    logger.info("🚀 Bot is live...")
+    logger.info("Bot running...")
     app.run_polling(drop_pending_updates=True)
