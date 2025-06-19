@@ -178,7 +178,8 @@ if __name__ == '__main__':
     bot_app.add_handler(CommandHandler('autorename', autorename))
     bot_app.add_handler(CommandHandler('broadcast', broadcast))
     bot_app.add_handler(CallbackQueryHandler(callback_handler))
-    bot_app.add_handler(MessageHandler(filters.Document.ALL | filters.Audio.ALL | filters.PHOTO, handle_file))
+    bot_app.add_handler(MessageHandler(filters.Document.ALL | filters.AUDIO.ALL | filters.PHOTO, handle_file))
+
 
     bot_app.run_polling()
     app.run(host='0.0.0.0', port=10000)
