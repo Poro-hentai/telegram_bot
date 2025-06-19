@@ -5,9 +5,7 @@ import logging
 import requests
 from PIL import Image
 from flask import Flask
-from telegram import (
-    Update, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
-)
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     CallbackQueryHandler, ContextTypes, filters
@@ -24,7 +22,10 @@ bot_app = Application.builder().token(TOKEN).build()
 
 # === JSON helpers ===
 def load_json(path):
-    return json.load(open(path)) if os.path.exists(path) else {}
+    if os.path.exists(path):
+        with open(path, 'r') as f:
+            return json.load(f)
+    return {}
 
 def save_json(path, data):
     with open(path, 'w') as f:
@@ -32,6 +33,7 @@ def save_json(path, data):
 
 patterns = load_json("patterns.json")
 thumbnails = load_json("thumbs.json")
+users = load_json("users.json")
 AUTO_RENAME = False
 
 # === Utilities ===
@@ -58,49 +60,40 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_photo(
         photo="https://telegra.ph/file/050a20dace942a60220c0.jpg",
-        caption=(
-            "👋 <b>Welcome to File Renamer Bot</b>\n\n"
-            "Send me any file and I'll help you rename it!\n"
-            "Use the buttons below to learn more."
-        ),
+        caption="👋 <b>Welcome to File Renamer Bot</b>\n\nSend me any file and I'll help you rename it!\nUse the buttons below to learn more.",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-
-    users = load_json("users.json")
     users[str(update.message.from_user.id)] = True
     save_json("users.json", users)
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+    keyboard = [
+        [InlineKeyboardButton("About", callback_data="about"), InlineKeyboardButton("Help", callback_data="help")],
+        [InlineKeyboardButton("Close", callback_data="close")]
+    ]
     if q.data == "close":
         await q.message.delete()
     elif q.data == "about":
         await q.message.edit_caption(
-            caption=(
-                "📌 <b>About Me:</b>\n"
-                "I'm a file renamer bot with auto-rename, thumbnail, PDF preview, and more!\n\n"
-                "<a href='https://t.me/yourchannel'>📣 Join Channel</a>"
-            ),
+            caption="📌 <b>About Me:</b>\nI'm a file renamer bot with auto-rename, thumbnail, PDF preview, and more!\n\n<a href='https://t.me/yourchannel'>📣 Join Channel</a>",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
         )
     elif q.data == "help":
         await q.message.edit_caption(
-            caption=(
-                "ℹ️ <b>Help Menu:</b>\n\n"
-                "1. Send me any file\n"
-                "2. Use /setpattern {filename} or {episode}\n"
-                "3. Use /autorename to toggle auto-renaming\n"
-                "4. Use /thumburl to set a thumbnail\n\n"
-                "Example: /setpattern {filename} Ep {episode}"
-            ),
+            caption="ℹ️ <b>Help Menu:</b>\n\n1. Send me any file\n2. Use /setpattern `{filename}` or `{episode}`\n3. Use /autorename to toggle auto-renaming\n4. Use /thumburl to set a thumbnail\n\nExample pattern: `{filename} Episode {episode}`",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
         )
     elif q.data == "back":
-        await start(update, context)
+        await q.message.edit_caption(
+            caption="👋 <b>Welcome to File Renamer Bot</b>\n\nSend me any file and I'll help you rename it!\nUse the buttons below to learn more.",
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
 async def setpattern(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.message.from_user.id)
@@ -142,13 +135,16 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     media = update.message.document or update.message.video or update.message.audio or update.message.photo[-1]
     file = await media.get_file()
     original_name = getattr(media, "file_name", f"file_{uuid.uuid4()}.mp4")
-
     episode = extract_episode(original_name)
     pattern = patterns.get(uid, "{filename}")
     new_name = pattern.replace("{episode}", episode).replace("{filename}", os.path.splitext(original_name)[0])
     downloaded = await file.download_to_drive(new_name)
 
-    thumb = generate_pdf_thumb(downloaded) if original_name.lower().endswith(".pdf") else thumbnails.get(uid)
+    thumb = None
+    if original_name.lower().endswith(".pdf"):
+        thumb = generate_pdf_thumb(downloaded)
+    elif uid in thumbnails:
+        thumb = thumbnails[uid]
 
     await update.message.reply_document(
         document=InputFile(downloaded),
@@ -167,14 +163,13 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         return await update.message.reply_text("Use: /broadcast Your message")
     text = " ".join(context.args)
-    users = load_json("users.json")
     count = 0
     for uid in users:
         try:
             await bot_app.bot.send_message(chat_id=uid, text=text)
             count += 1
         except:
-            continue
+            pass
     await update.message.reply_text(f"✅ Broadcast sent to {count} users!")
 
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -197,7 +192,7 @@ bot_app.add_handler(CommandHandler("thumburl", thumburl))
 bot_app.add_handler(CommandHandler("broadcast", broadcast))
 bot_app.add_handler(CallbackQueryHandler(callback_handler))
 bot_app.add_handler(MessageHandler(
-    filters.Document.ALL | filters.VIDEO | filters.AUDIO | filters.PHOTO,
+    filters.Document.ALL | filters.Video | filters.Audio | filters.PHOTO,
     handle_file
 ))
 bot_app.add_handler(MessageHandler(filters.COMMAND, unknown))
