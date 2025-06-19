@@ -194,7 +194,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await status_message.edit_text("⬆️ Uploading and renaming your file...")
 
-        caption = f"`{new_name}`"
+        caption = f"{new_name}"
         thumb_file_object = None
         temp_thumb_path = None
 
