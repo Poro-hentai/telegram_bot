@@ -1,181 +1,163 @@
 import os
 import json
 import requests
+import logging
 from flask import Flask, request as flask_request
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
-from telegram.constants import ChatAction
-
-TOKEN = "7363840731:AAE7TD7eLEs7GjbsguH70v5o2XhT89BePCM"
-ADMIN_ID = 5759232282
+from telegram import (Update, InlineKeyboardMarkup, InlineKeyboardButton, InputFile)
+from telegram.ext import (Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters)
 
 app = Flask(__name__)
+TOKEN = "7363840731:AAE7TD7eLEs7GjbsguH70v5o2XhT89BePCM"
+ADMIN_ID = 5759232282  # Change to your Telegram user ID
+USERS_FILE = "users.json"
 
-# JSON file paths
-THUMB_FILE = "thumbs.json"
-PATTERN_FILE = "patterns.json"
+if not os.path.exists(USERS_FILE):
+    with open(USERS_FILE, "w") as f:
+        json.dump({}, f)
 
-# Load or initialize JSON
-for file in [THUMB_FILE, PATTERN_FILE]:
-    if not os.path.exists(file):
-        with open(file, "w") as f:
-            json.dump({}, f)
-
-# Load data
-
-def load_json(file):
-    with open(file, "r") as f:
-        return json.load(f)
-
-def save_json(file, data):
-    with open(file, "w") as f:
+def save_user_data(user_id, key, value):
+    with open(USERS_FILE, "r") as f:
+        data = json.load(f)
+    if str(user_id) not in data:
+        data[str(user_id)] = {}
+    data[str(user_id)][key] = value
+    with open(USERS_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-# START
+def get_user_data(user_id, key, default=None):
+    with open(USERS_FILE, "r") as f:
+        data = json.load(f)
+    return data.get(str(user_id), {}).get(key, default)
+
+@app.route("/")
+def index():
+    return "Bot is running"
+
+# Telegram Bot Setup
+bot_app = Application.builder().token(TOKEN).build()
+
+# Start Command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons = [
-        [InlineKeyboardButton("About", callback_data="about"), InlineKeyboardButton("Help", callback_data="help")],
+        [InlineKeyboardButton("About", callback_data="about"),
+         InlineKeyboardButton("Help", callback_data="help")],
         [InlineKeyboardButton("Close", callback_data="close")]
     ]
-    await context.bot.send_photo(
-        chat_id=update.effective_chat.id,
+    await update.message.reply_photo(
         photo="https://telegra.ph/file/050a20dace942a60220c0.jpg",
-        caption="\u2728 <b>Welcome to the File Renamer Bot</b>\nUse /setpattern and /setthumburl to configure.\nEnjoy fast renaming and thumbnails.\nJoin <a href='https://t.me/yourchannel'>Our Channel</a>",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(buttons)
+        caption="\u2728 *Welcome to File Renamer Bot!*\n\nUse this bot to rename files with custom captions and thumbnails.\n\nJoin our [Channel](https://t.me/example) for updates!",
+        reply_markup=InlineKeyboardMarkup(buttons),
+        parse_mode="Markdown"
     )
 
-# BUTTON HANDLER
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Callback for Start Menu
+async def buttons_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    data = query.data
     await query.answer()
 
-    if query.data == "about":
-        buttons = [[InlineKeyboardButton("Back", callback_data="back"), InlineKeyboardButton("Close", callback_data="close")]]
+    if data == "about":
         await query.edit_message_media(
-            media=InputMediaPhoto(
-                media="https://telegra.ph/file/9d18345731db88fff4f8c.jpg",
-                caption="<b>About Us</b>\n<a href='https://t.me/yourchannel'>Channel</a> | <a href='https://t.me/support'>Support</a>",
-                parse_mode="HTML"
-            ),
-            reply_markup=InlineKeyboardMarkup(buttons)
+            media=InputFile.from_url("https://telegra.ph/file/9d18345731db88fff4f8c.jpg"),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("Back", callback_data="back"), InlineKeyboardButton("Close", callback_data="close")]
+            ])
         )
-    elif query.data == "help":
-        buttons = [[InlineKeyboardButton("Back", callback_data="back"), InlineKeyboardButton("Close", callback_data="close")]]
+    elif data == "help":
         await query.edit_message_media(
-            media=InputMediaPhoto(
-                media="https://telegra.ph/file/e6ec31fc792d072da2b7e.jpg",
-                caption="\u2753 <b>Help</b>\nUse /setpattern to set filename\n/setthumburl to set thumbnail from image URL.",
-                parse_mode="HTML"
-            ),
-            reply_markup=InlineKeyboardMarkup(buttons)
+            media=InputFile.from_url("https://telegra.ph/file/e6ec31fc792d072da2b7e.jpg"),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("Back", callback_data="back"), InlineKeyboardButton("Close", callback_data="close")]
+            ])
         )
-    elif query.data == "back":
+    elif data == "back":
         await start(update, context)
-    elif query.data == "close":
+    elif data == "close":
         await query.message.delete()
 
-# SETPATTERN
+# Set Pattern
 async def setpattern(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
     pattern = " ".join(context.args)
-    data = load_json(PATTERN_FILE)
-    data[user_id] = pattern
-    save_json(PATTERN_FILE, data)
-    await update.message.reply_text("✅ Pattern saved successfully!")
-
-# SETTHUMBURL
-async def setthumburl(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    url = " ".join(context.args)
-    thumbs = load_json(THUMB_FILE)
-    thumbs[user_id] = url
-    save_json(THUMB_FILE, thumbs)
-    await update.message.reply_text("✅ Thumbnail URL saved!")
-
-# SEETHUMB
-async def seethumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    thumbs = load_json(THUMB_FILE)
-    if user_id in thumbs:
-        await update.message.reply_photo(photo=thumbs[user_id], caption="This is your saved thumbnail.")
+    if pattern:
+        save_user_data(update.effective_user.id, "pattern", pattern)
+        await update.message.reply_text("✅ Pattern set successfully!")
     else:
-        await update.message.reply_text("❌ No thumbnail found.")
+        await update.message.reply_text("❌ Please provide a pattern after /setpattern")
 
-# BROADCAST
+# Set Thumbnail URL
+async def setthumburl(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.args:
+        thumb_url = context.args[0]
+        try:
+            res = requests.get(thumb_url)
+            if res.status_code == 200:
+                save_user_data(update.effective_user.id, "thumb_url", thumb_url)
+                await update.message.reply_text("✅ Thumbnail URL set successfully!")
+            else:
+                await update.message.reply_text("❌ Invalid image URL.")
+        except:
+            await update.message.reply_text("❌ Error downloading image.")
+    else:
+        await update.message.reply_text("❌ Please provide a URL after /setthumburl")
+
+# See Current Thumbnail
+async def seethumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    thumb_url = get_user_data(update.effective_user.id, "thumb_url")
+    if thumb_url:
+        await update.message.reply_photo(photo=thumb_url, caption="🖼️ Your current thumbnail")
+    else:
+        await update.message.reply_text("❌ No thumbnail set")
+
+# Broadcast
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        return
-    msg = update.message.reply_to_message
-    if not msg:
-        await update.message.reply_text("Reply to a message to broadcast.")
-        return
+        return await update.message.reply_text("❌ You are not authorized.")
+    text = " ".join(context.args)
+    if not text:
+        return await update.message.reply_text("❌ Provide text after /broadcast")
 
-    with open("users.json", "r") as f:
+    with open(USERS_FILE, "r") as f:
         users = json.load(f)
 
     count = 0
     for uid in users:
         try:
-            await msg.copy(chat_id=int(uid))
+            await context.bot.send_message(chat_id=uid, text=text)
             count += 1
         except:
             continue
-    await update.message.reply_text(f"Broadcasted to {count} users.")
+    await update.message.reply_text(f"✅ Broadcast sent to {count} users")
 
-# HANDLE FILE
+# File Handler
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
+    user = update.effective_user
     file = update.message.document or update.message.video
-    file_name = file.file_name
+    if not file:
+        return
 
-    patterns = load_json(PATTERN_FILE)
-    new_name = patterns.get(user_id, file_name)
+    await_msg = await update.message.reply_text("📥 Downloading...")
 
-    thumbs = load_json(THUMB_FILE)
-    thumb = thumbs.get(user_id)
+    file_path = await file.get_file()
+    filename = file.file_name
+    pattern = get_user_data(user.id, "pattern")
+    new_name = pattern.format(filename=filename) if pattern else filename
 
-    await update.message.chat.send_action(action=ChatAction.UPLOAD_DOCUMENT)
-    await file.get_file().download_to_drive(file_name)
-    with open(file_name, "rb") as f:
-        await context.bot.send_document(
-            chat_id=update.effective_chat.id,
-            document=f,
-            filename=new_name,
-            caption=f"Here is your renamed file: <code>{new_name}</code>",
-            parse_mode="HTML",
-            thumb=thumb if thumb else None
-        )
-    os.remove(file_name)
+    thumb_url = get_user_data(user.id, "thumb_url")
+    thumb = InputFile.from_url(thumb_url) if thumb_url else None
 
-    # Save user to users.json
-    if not os.path.exists("users.json"):
-        with open("users.json", "w") as f:
-            json.dump({}, f)
-    with open("users.json", "r") as f:
-        users = json.load(f)
-    if user_id not in users:
-        users[user_id] = True
-        with open("users.json", "w") as f:
-            json.dump(users, f, indent=2)
+    await await_msg.delete()
+    await update.message.reply_document(document=file.file_id, filename=new_name, caption=new_name, thumb=thumb)
 
-# MAIN
-application = Application.builder().token(TOKEN).build()
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CallbackQueryHandler(button))
-application.add_handler(CommandHandler("setpattern", setpattern))
-application.add_handler(CommandHandler("setthumburl", setthumburl))
-application.add_handler(CommandHandler("seethumb", seethumb))
-application.add_handler(CommandHandler("broadcast", broadcast))
-application.add_handler(MessageHandler(filters.Document.ALL | filters.Video, handle_file))
+# Register Handlers
+bot_app.add_handler(CommandHandler("start", start))
+bot_app.add_handler(CallbackQueryHandler(buttons_callback))
+bot_app.add_handler(CommandHandler("setpattern", setpattern))
+bot_app.add_handler(CommandHandler("setthumburl", setthumburl))
+bot_app.add_handler(CommandHandler("seethumb", seethumb))
+bot_app.add_handler(CommandHandler("broadcast", broadcast))
+bot_app.add_handler(MessageHandler(filters.Document.ALL | filters.Video | filters.Audio | filters.Photo, handle_file))
 
-@app.route("/", methods=["GET"])
-def home():
-    return "Bot is running!"
-
-def run():
-    application.run_polling()
-
-if __name__ == '__main__':
-    run()
+if __name__ == "__main__":
+    import threading
+    threading.Thread(target=bot_app.run_polling).start()
     app.run(host="0.0.0.0", port=10000)
