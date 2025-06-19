@@ -193,8 +193,6 @@ bot_app.add_handler(MessageHandler(
     filters.Document.ALL | filters.VIDEO | filters.Audio.ALL | filters.PHOTO,
     handle_file
 ))
-
-
 bot_app.add_handler(MessageHandler(filters.COMMAND, unknown))
 
 # === Run Bot ===
