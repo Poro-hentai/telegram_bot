@@ -3,5 +3,6 @@ Flask==2.3.3
 requests
 pillow
 fitz
-PyMuPDF
+PyMuPDF==1.26.1
+
 pdf2image
