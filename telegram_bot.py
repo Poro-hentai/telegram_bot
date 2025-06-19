@@ -25,7 +25,7 @@ user_thumbnail = None
 
 # Thumbnail URL (permanent)
 THUMBNAIL_URL = "https://telegra.ph/file/9d18345731db88fff4f8c-d2b3920631195c5747.jpg"
-THUMBNAIL_PATH = "thumbnails/fixed_thumb.jpg"
+THUMBNAIL_PATH = "fixed_thumb.jpg"
 
 # Flask app for Render
 flask_app = Flask(__name__)
