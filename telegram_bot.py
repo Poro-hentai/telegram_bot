@@ -2,15 +2,19 @@ import os
 import json
 import uuid
 import logging
-import fitz  # this is correct, but only if PyMuPDF is correctly installed
-
 import requests
 from PIL import Image
 from flask import Flask
-from telegram import (Update, InlineKeyboardMarkup, InlineKeyboardButton, InputFile)
-from telegram.ext import (Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters)
+from telegram import (
+    Update, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
+)
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler,
+    CallbackQueryHandler, ContextTypes, filters
+)
 from pdf2image import convert_from_path
 
+# === Configuration ===
 TOKEN = "7363840731:AAE7TD7eLEs7GjbsguH70v5o2XhT89BePCM"
 ADMIN_ID = 5759232282
 
@@ -18,7 +22,7 @@ logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 bot_app = Application.builder().token(TOKEN).build()
 
-# JSON FILES
+# === JSON helpers ===
 def load_json(path):
     if os.path.exists(path):
         with open(path, 'r') as f:
@@ -31,10 +35,9 @@ def save_json(path, data):
 
 patterns = load_json("patterns.json")
 thumbnails = load_json("thumbs.json")
-
 AUTO_RENAME = False
 
-# UTILITIES
+# === Utilities ===
 def extract_episode(filename):
     import re
     match = re.search(r"(?:CH|Ep|EP|E)?\s*(\d{1,3})", filename, re.IGNORECASE)
@@ -50,7 +53,7 @@ def generate_pdf_thumb(path):
         logging.error("PDF Thumb Error: %s", e)
         return None
 
-# HANDLERS
+# === Handlers ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("About", callback_data="about"), InlineKeyboardButton("Help", callback_data="help")],
@@ -58,9 +61,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_photo(
         photo="https://telegra.ph/file/050a20dace942a60220c0.jpg",
-        caption="👋 Welcome to File Renamer Bot\nUse the buttons below to explore!",
+        caption="👋 <b>Welcome to File Renamer Bot</b>\n\nSend me any file and I'll help you rename it!\nUse the buttons below to learn more.",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+
+    # Save user to users.json
+    users = load_json("users.json")
+    users[str(update.message.from_user.id)] = True
+    save_json("users.json", users)
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -69,13 +78,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.delete()
     elif q.data == "about":
         await q.message.edit_caption(
-            caption="📌 <b>About Me:</b>\nI'm an anime file renamer bot with autorename, thumbnails, and more!\n<a href='https://t.me/yourchannel'>📣 Join Channel</a>",
+            caption="📌 <b>About Me:</b>\nI'm a file renamer bot with auto-rename, thumbnail, PDF preview, and more!\n\n<a href='https://t.me/yourchannel'>📣 Join Channel</a>",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
         )
     elif q.data == "help":
         await q.message.edit_caption(
-            caption="ℹ️ <b>Help:</b>\n1. Send me any file\n2. Use /setpattern {filename} {episode}\n3. /autorename to enable\n4. /thumburl to set thumbnail",
+            caption="ℹ️ <b>Help Menu:</b>\n\n1. Send me any file\n2. Use /setpattern `{filename}` or `{episode}`\n3. Use /autorename to toggle auto-renaming\n4. Use /thumburl to set a thumbnail\n\nExample pattern: `{filename} Episode {episode}`",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
         )
@@ -97,7 +106,7 @@ async def autorename(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.from_user.id != ADMIN_ID:
         return await update.message.reply_text("Baka! You are not my senpai ✋")
     AUTO_RENAME = not AUTO_RENAME
-    await update.message.reply_text(f"✅ Auto Rename: {'ON' if AUTO_RENAME else 'OFF'}")
+    await update.message.reply_text(f"✅ Auto Rename is now: {'ON' if AUTO_RENAME else 'OFF'}")
 
 async def thumburl(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.message.from_user.id)
@@ -111,9 +120,10 @@ async def thumburl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         img.save(path)
         thumbnails[uid] = path
         save_json("thumbs.json", thumbnails)
-        await update.message.reply_text("✅ Thumbnail set.")
-    except:
+        await update.message.reply_text("✅ Thumbnail set successfully.")
+    except Exception as e:
         await update.message.reply_text("Failed to set thumbnail.")
+        logging.error("Thumbnail error: %s", e)
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
@@ -136,7 +146,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_document(
         document=InputFile(downloaded),
         filename=new_name,
-        caption=f"{new_name}",  #name when file renamed
+        caption=f"{new_name}",
         parse_mode='Markdown',
         thumb=InputFile(thumb) if thumb else None
     )
@@ -151,36 +161,41 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("Use: /broadcast Your message")
     text = " ".join(context.args)
     users = load_json("users.json")
+    count = 0
     for uid in users:
         try:
             await bot_app.bot.send_message(chat_id=uid, text=text)
+            count += 1
         except:
             pass
-    await update.message.reply_text("✅ Broadcast sent!")
+    await update.message.reply_text(f"✅ Broadcast sent to {count} users!")
 
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❓ Unknown command. Use /start")
 
-# ROUTES
+# === Web App ===
 @app.route("/")
 def home():
-    return "Bot is alive!"
+    return "🤖 Bot is alive!"
 
 @app.route("/restart")
 def restart():
     return "🔄 Bot restarted by Shadow"
 
-# REGISTRATION
+# === Register Handlers ===
 bot_app.add_handler(CommandHandler("start", start))
 bot_app.add_handler(CommandHandler("setpattern", setpattern))
 bot_app.add_handler(CommandHandler("autorename", autorename))
 bot_app.add_handler(CommandHandler("thumburl", thumburl))
 bot_app.add_handler(CommandHandler("broadcast", broadcast))
 bot_app.add_handler(CallbackQueryHandler(callback_handler))
-bot_app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO | filters.PHOTO | filters.AUDIO, handle_file))
-
+bot_app.add_handler(MessageHandler(
+    filters.Document.ALL | filters.Video.ALL | filters.Audio.ALL | filters.PHOTO,
+    handle_file
+))
 bot_app.add_handler(MessageHandler(filters.COMMAND, unknown))
 
+# === Run Bot ===
 if __name__ == '__main__':
     import threading
     threading.Thread(target=lambda: bot_app.run_polling()).start()
