@@ -1,198 +1,238 @@
+# === File Renamer Bot with Enhanced Features ===
+
 import os
-import json
+import re
 import uuid
+import json
 import logging
+import threading
 import requests
-import asyncio
-from PIL import Image
+from datetime import datetime
 from flask import Flask
-from threading import Thread
-from pdf2image import convert_from_path
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
+from PIL import Image
+from io import BytesIO
+from telegram import Update, InputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler,
-    CallbackQueryHandler, ContextTypes, filters
+    ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes,
+    CallbackQueryHandler, filters
 )
 
-# === Config ===
+# === Configuration ===
 TOKEN = "7363840731:AAE7TD7eLEs7GjbsguH70v5o2XhT89BePCM"
 ADMIN_ID = 5759232282
+START_TIME = datetime.now()
 
-logging.basicConfig(level=logging.INFO)
-app = Flask(__name__)
+# === Logging ===
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-patterns = {}
-thumbnails = {}
-AUTO_RENAME = False
+# === Flask for Render Keep-Alive ===
+flask_app = Flask(__name__)
 
-# === Load/Save JSON ===
+@flask_app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    flask_app.run(host="0.0.0.0", port=port)
+
+# === Directories ===
+os.makedirs("downloads", exist_ok=True)
+os.makedirs("thumbnails", exist_ok=True)
+
+# === File Paths ===
+USERS_FILE = "users.json"
+THUMBS_FILE = "thumbs.json"
+
+# === Load/Save Functions ===
 def load_json(path):
     return json.load(open(path)) if os.path.exists(path) else {}
 
 def save_json(path, data):
     with open(path, 'w') as f:
-        json.dump(data, f, indent=4)
+        json.dump(data, f, indent=2)
 
-patterns = load_json("patterns.json")
-thumbnails = load_json("thumbs.json")
+# === Globals ===
+users = load_json(USERS_FILE)
+thumbs = load_json(THUMBS_FILE)
+file_counter = 0
+pattern = "{original}_{number}"
+autorename_enabled = {}
 
-# === Utilities ===
-def extract_episode(filename):
-    import re
-    match = re.search(r"(?:CH|Ep|EP|E)?\s*(\d{1,3})", filename, re.IGNORECASE)
-    return match.group(1) if match else "01"
+# === Utils ===
+def register_user(user_id):
+    if str(user_id) not in users:
+        users[str(user_id)] = str(datetime.now())
+        save_json(USERS_FILE, users)
 
-def generate_pdf_thumb(path):
-    try:
-        img = convert_from_path(path, first_page=1, last_page=1)[0]
-        thumb_path = f"thumb_{uuid.uuid4()}.jpg"
-        img.save(thumb_path, "JPEG")
-        return thumb_path
-    except Exception as e:
-        logging.error("PDF Thumb Error: %s", e)
-        return None
+def generate_filename(original):
+    global file_counter, pattern
+    file_counter += 1
+    base, ext = os.path.splitext(original)
+    base = re.sub(r'[<>:"/\\|?*]', '', base)
+    return pattern.replace("{original}", base).replace("{number}", str(file_counter)) + ext
 
-# === Telegram Handlers ===
+def download_and_convert_jpg(url, path):
+    r = requests.get(url)
+    img = Image.open(BytesIO(r.content)).convert("RGB")
+    img.save(path, "JPEG")
+
+# === Command Handlers ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("About", callback_data="about"), InlineKeyboardButton("Help", callback_data="help")],
-        [InlineKeyboardButton("Close", callback_data="close")]
-    ]
+    user_id = update.effective_user.id
+    register_user(user_id)
+    buttons = [[
+        InlineKeyboardButton("About", callback_data="about"),
+        InlineKeyboardButton("Help", callback_data="help")
+    ], [
+        InlineKeyboardButton("Close", callback_data="close")
+    ]]
     await update.message.reply_photo(
-        photo="https://telegra.ph/file/050a20dace942a60220c0.jpg",
-        caption="""👋 <b>Welcome to File Renamer Bot</b>
-
-• Send me any file.
-• I'll help you rename it.
-• Admin can use pattern, auto-rename, and thumbnail commands.
-
-Use buttons below to learn more.""",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+        photo="https://telegra.ph/file/9d18345731db88fff4f8c-d2b3920631195c5747.jpg",
+        caption="\U0001F44B *Welcome to File Renamer Bot!*\n\nSend a document or video and I'll rename it!\n\n/setpattern | /setthumburl | /deletethumb | /autorename | /stats",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(buttons)
     )
-    users = load_json("users.json")
-    users[str(update.message.from_user.id)] = True
-    save_json("users.json", users)
 
-async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    if q.data == "close":
-        await q.message.delete()
-    elif q.data == "about":
-        await q.message.edit_caption(
-            caption="""📌 <b>About:</b>
-I rename files, generate thumbnails, extract PDF previews, and more!
+async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
 
-<a href='https://t.me/yourchannel'>📣 Join our Channel</a>""",
-            parse_mode='HTML',
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
+    if query.data == "about":
+        await query.edit_message_caption(
+            caption="\U0001F4C5 *About Us*\n\nFile renamer bot for Telegram. Made by @YourChannel.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back")]])
         )
-    elif q.data == "help":
-        await q.message.edit_caption(
-            caption="""ℹ️ <b>Help Menu</b>:
-
-1. Send me any file.
-2. /setpattern {filename} or {episode}
-3. /autorename to toggle auto renaming
-4. /thumburl <image_url>""",
-            parse_mode='HTML',
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
+    elif query.data == "help":
+        await query.edit_message_caption(
+            caption="\u2753 *Help Menu*\n\n/setpattern <pattern>\n/setthumburl <url>\n/deletethumb\n/autorename on|off\n/stats",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back")]])
         )
-    elif q.data == "back":
+    elif query.data == "back":
         await start(update, context)
+    elif query.data == "close":
+        await query.message.delete()
 
-async def setpattern(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = str(update.message.from_user.id)
-    if uid != str(ADMIN_ID):
-        return await update.message.reply_text("Baka! You are not my senpai ✋")
+async def set_thumb_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        return await update.message.reply_text("Use: /setpattern {pattern}")
-    patterns[uid] = " ".join(context.args)
-    save_json("patterns.json", patterns)
-    await update.message.reply_text(f"✅ Pattern set to: `{patterns[uid]}`", parse_mode='Markdown')
+        await update.message.reply_text("❗ Usage: /setthumburl <Telegra.ph URL>")
+        return
+    url = context.args[0]
+    if not url.startswith("https://telegra.ph"):
+        await update.message.reply_text("❌ Only Telegra.ph images supported.")
+        return
+    user_id = str(update.effective_user.id)
+    thumbs[user_id] = url
+    save_json(THUMBS_FILE, thumbs)
+    download_and_convert_jpg(url, f"thumbnails/{user_id}.jpg")
+    await update.message.reply_text("✅ Thumbnail set!")
 
-async def autorename(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global AUTO_RENAME
-    if update.message.from_user.id != ADMIN_ID:
-        return await update.message.reply_text("Baka! You are not my senpai ✋")
-    AUTO_RENAME = not AUTO_RENAME
-    await update.message.reply_text(f"✅ Auto Rename is now: {'ON' if AUTO_RENAME else 'OFF'}")
+async def delete_thumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    thumbs.pop(user_id, None)
+    save_json(THUMBS_FILE, thumbs)
+    path = f"thumbnails/{user_id}.jpg"
+    if os.path.exists(path): os.remove(path)
+    await update.message.reply_text("🗑️ Thumbnail deleted.")
 
-async def thumburl(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = str(update.message.from_user.id)
-    if uid != str(ADMIN_ID):
-        return await update.message.reply_text("Baka! You are not my senpai ✋")
+async def set_pattern(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global pattern
     if not context.args:
-        return await update.message.reply_text("Send image URL")
-    try:
-        img = Image.open(requests.get(context.args[0], stream=True).raw)
-        path = f"thumb_{uid}.jpg"
-        img.save(path)
-        thumbnails[uid] = path
-        save_json("thumbs.json", thumbnails)
-        await update.message.reply_text("✅ Thumbnail set successfully.")
-    except Exception as e:
-        await update.message.reply_text("Failed to set thumbnail.")
-        logging.error("Thumbnail error: %s", e)
+        await update.message.reply_text("❗ Usage: /setpattern <pattern>")
+        return
+    pattern = ' '.join(context.args)
+    await update.message.reply_text(f"✅ Pattern set: `{pattern}`", parse_mode="Markdown")
+
+async def auto_rename(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    if context.args and context.args[0].lower() == "on":
+        autorename_enabled[user_id] = True
+        await update.message.reply_text("✅ Autorename enabled!")
+    else:
+        autorename_enabled[user_id] = False
+        await update.message.reply_text("❌ Autorename disabled.")
+
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uptime = datetime.now() - START_TIME
+    await update.message.reply_text(f"📊 Stats\nUsers: {len(users)}\nUptime: {str(uptime).split('.')[0]}")
+
+async def users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    await update.message.reply_text(f"👥 Total users: {len(users)}")
+
+# === File Handling ===
+def is_video(filename):
+    return filename.lower().endswith(('.mp4', '.mkv', '.avi'))
+
+def is_pdf(filename):
+    return filename.lower().endswith('.pdf')
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.message.from_user
-    uid = str(user.id)
-    media = update.message.document or update.message.video or update.message.audio or update.message.photo[-1]
-    file = await media.get_file()
-    original_name = getattr(media, "file_name", f"file_{uuid.uuid4()}.mp4")
-    episode = extract_episode(original_name)
-    pattern = patterns.get(uid, "{filename}")
-    new_name = pattern.replace("{episode}", episode).replace("{filename}", os.path.splitext(original_name)[0])
-    downloaded = await file.download_to_drive(new_name)
+    user_id = str(update.effective_user.id)
+    register_user(user_id)
+    file = update.message.document or update.message.video
+    if not file:
+        await update.message.reply_text("❗ Send a valid video or document file.")
+        return
 
-    thumb = None
-    if original_name.lower().endswith(".pdf"):
-        thumb = generate_pdf_thumb(downloaded)
-    elif uid in thumbnails:
-        thumb = thumbnails[uid]
+    msg = await update.message.reply_text("⬇️ Downloading...")
+    await context.bot.delete_message(chat_id=update.effective_chat.id, message_id=update.message.message_id)
+    original_name = file.file_name or "file"
+    new_name = generate_filename(original_name) if autorename_enabled.get(user_id) else original_name
+    path = f"downloads/{uuid.uuid4().hex}_{original_name}"
 
-    await update.message.reply_document(
-        document=InputFile(downloaded),
-        filename=new_name,
-        caption=f"{new_name}",
-        parse_mode='Markdown',
-        thumb=InputFile(thumb) if thumb else None
-    )
-    os.remove(downloaded)
-    if thumb and thumb.startswith("thumb_"):
-        os.remove(thumb)
+    tg_file = await file.get_file()
+    await tg_file.download_to_drive(path)
+    await msg.edit_text("⬆️ Uploading...")
 
-async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❓ Unknown command. Use /start")
+    thumb_path = f"thumbnails/{user_id}.jpg"
+    thumb = open(thumb_path, "rb") if os.path.exists(thumb_path) else None
 
-# === Flask routes ===
-@app.route('/')
-def index():
-    return "Bot is running"
+    try:
+        if is_video(original_name):
+            await context.bot.send_video(
+                chat_id=update.effective_chat.id,
+                video=open(path, "rb"),
+                caption=new_name,
+                thumbnail=thumb,
+                supports_streaming=True
+            )
+        else:
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=open(path, "rb"),
+                caption=new_name,
+                filename=new_name,
+                thumbnail=thumb if is_pdf(original_name) else None
+            )
+        await msg.delete()
+        done_msg = await update.effective_chat.send_message("✅ Done!")
+        await threading.Timer(30.0, lambda: context.bot.delete_message(update.effective_chat.id, done_msg.message_id)).start()
+    except Exception as e:
+        await msg.edit_text(f"❌ Error: {e}")
+    finally:
+        if os.path.exists(path): os.remove(path)
+        if thumb: thumb.close()
 
-# === Telegram bot start function ===
-async def run_bot():
-    application = Application.builder().token(TOKEN).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("setpattern", setpattern))
-    application.add_handler(CommandHandler("autorename", autorename))
-    application.add_handler(CommandHandler("thumburl", thumburl))
-    application.add_handler(CallbackQueryHandler(callback_handler))
-    application.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO | filters.AUDIO | filters.PHOTO, handle_file))
-    application.add_handler(MessageHandler(filters.COMMAND, unknown))
-
-    await application.initialize()
-    await application.start()
-    await application.updater.start_polling()
-    print("Bot polling started")
-
-# === Combine Flask + Bot ===
-def start_flask():
-    app.run(host="0.0.0.0", port=10000)
-
+# === Main Init ===
 if __name__ == "__main__":
-    Thread(target=start_flask).start()
-    asyncio.run(run_bot())
+    threading.Thread(target=run_flask, daemon=True).start()
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("setthumburl", set_thumb_url))
+    app.add_handler(CommandHandler("deletethumb", delete_thumb))
+    app.add_handler(CommandHandler("setpattern", set_pattern))
+    app.add_handler(CommandHandler("autorename", auto_rename))
+    app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CommandHandler("users", users_list))
+    app.add_handler(CallbackQueryHandler(handle_buttons))
+    app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_file))
+    app.add_handler(MessageHandler(filters.ALL, lambda u, c: u.message.delete()))
+
+    logger.info("Bot is running...")
+    app.run_polling(drop_pending_updates=True)
