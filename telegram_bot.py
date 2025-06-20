@@ -5,7 +5,9 @@ import logging
 import requests
 from PIL import Image
 from flask import Flask
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
+from telegram import (
+    Update, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
+)
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     CallbackQueryHandler, ContextTypes, filters
@@ -33,7 +35,6 @@ def save_json(path, data):
 
 patterns = load_json("patterns.json")
 thumbnails = load_json("thumbs.json")
-users = load_json("users.json")
 AUTO_RENAME = False
 
 # === Utilities ===
@@ -60,40 +61,49 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await update.message.reply_photo(
         photo="https://telegra.ph/file/050a20dace942a60220c0.jpg",
-        caption="👋 <b>Welcome to File Renamer Bot</b>\n\nSend me any file and I'll help you rename it!\nUse the buttons below to learn more.",
+        caption="""👋 <b>Welcome to File Renamer Bot</b>
+
+• Send me any file.
+• I'll help you rename it.
+• Admin can use pattern, auto-rename, and thumbnail commands.
+
+Use buttons below to learn more.
+        """,
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+    users = load_json("users.json")
     users[str(update.message.from_user.id)] = True
     save_json("users.json", users)
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    keyboard = [
-        [InlineKeyboardButton("About", callback_data="about"), InlineKeyboardButton("Help", callback_data="help")],
-        [InlineKeyboardButton("Close", callback_data="close")]
-    ]
     if q.data == "close":
         await q.message.delete()
     elif q.data == "about":
         await q.message.edit_caption(
-            caption="📌 <b>About Me:</b>\nI'm a file renamer bot with auto-rename, thumbnail, PDF preview, and more!\n\n<a href='https://t.me/yourchannel'>📣 Join Channel</a>",
+            caption="""📌 <b>About:</b>
+I rename files, generate thumbnails, extract PDF previews, and more!
+
+<a href='https://t.me/yourchannel'>📣 Join our Channel</a>""",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
         )
     elif q.data == "help":
         await q.message.edit_caption(
-            caption="ℹ️ <b>Help Menu:</b>\n\n1. Send me any file\n2. Use /setpattern `{filename}` or `{episode}`\n3. Use /autorename to toggle auto-renaming\n4. Use /thumburl to set a thumbnail\n\nExample pattern: `{filename} Episode {episode}`",
+            caption="""ℹ️ <b>Help Menu</b>:
+
+1. Send me any file.
+2. /setpattern {filename} or {episode}
+3. /autorename to toggle auto renaming
+4. /thumburl <image_url>
+        """,
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
         )
     elif q.data == "back":
-        await q.message.edit_caption(
-            caption="👋 <b>Welcome to File Renamer Bot</b>\n\nSend me any file and I'll help you rename it!\nUse the buttons below to learn more.",
-            parse_mode='HTML',
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        await start(update, context)
 
 async def setpattern(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = str(update.message.from_user.id)
@@ -126,7 +136,7 @@ async def thumburl(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_json("thumbs.json", thumbnails)
         await update.message.reply_text("✅ Thumbnail set successfully.")
     except Exception as e:
-        await update.message.reply_text("❌ Failed to set thumbnail.")
+        await update.message.reply_text("Failed to set thumbnail.")
         logging.error("Thumbnail error: %s", e)
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -149,7 +159,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_document(
         document=InputFile(downloaded),
         filename=new_name,
-        caption=new_name,
+        caption=f"{new_name}",
         parse_mode='Markdown',
         thumb=InputFile(thumb) if thumb else None
     )
@@ -163,6 +173,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         return await update.message.reply_text("Use: /broadcast Your message")
     text = " ".join(context.args)
+    users = load_json("users.json")
     count = 0
     for uid in users:
         try:
@@ -192,7 +203,7 @@ bot_app.add_handler(CommandHandler("thumburl", thumburl))
 bot_app.add_handler(CommandHandler("broadcast", broadcast))
 bot_app.add_handler(CallbackQueryHandler(callback_handler))
 bot_app.add_handler(MessageHandler(
-    filters.Document.ALL | filters.Video | filters.Audio | filters.PHOTO,
+    filters.Document.ALL | filters.Video.ALL | filters.Audio.ALL | filters.PHOTO,
     handle_file
 ))
 bot_app.add_handler(MessageHandler(filters.COMMAND, unknown))
