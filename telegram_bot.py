@@ -202,10 +202,7 @@ bot_app.add_handler(CommandHandler("autorename", autorename))
 bot_app.add_handler(CommandHandler("thumburl", thumburl))
 bot_app.add_handler(CommandHandler("broadcast", broadcast))
 bot_app.add_handler(CallbackQueryHandler(callback_handler))
-bot_app.add_handler(MessageHandler(
-    filters.Document.ALL | filters.VIDEO | filters.Audio | filters.PHOTO,
-    handle_file
-))
+app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO, handle_file))
 bot_app.add_handler(MessageHandler(filters.COMMAND, unknown))
 
 # === Run Bot ===
