@@ -74,11 +74,12 @@ def download_thumb(url, path):
     img.save(path, "JPEG")
 
 async def progress_bar(context, message, done_event):
-    bar = ["⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜", ""]
+    bar_template = list("⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛")
     for i in range(1, 11):
         if done_event.is_set(): break
-        bar[1] = bar[0][:i] + "🟩" + bar[0][i+1:]
-        await message.edit_text(f"📦 Progress: `{bar[1]}`", parse_mode="Markdown")
+        temp = bar_template.copy()
+        temp[i-1] = "⬛"
+        await message.edit_text(f"📦 Progress: `{''.join(temp)}`", parse_mode="Markdown")
         await asyncio.sleep(1)
 
 async def cleanup_file(path):
@@ -96,14 +97,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]]
     await update.message.reply_photo(
         photo="https://telegra.ph/file/9d18345731db88fff4f8c-d2b3920631195c5747.jpg",
-        caption="👋 *Welcome to File Renamer Bot!*\n\nSend a file, I'll rename or customize it as per your settings!\nUse /help for full command list.",
+        caption="\ud83d\udc4b *Welcome to File Renamer Bot!*\n\nSend a file, I'll rename or customize it as per your settings!\nUse /help for full command list.",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(buttons)
     )
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("""
-📖 *Help Menu*
+\ud83d\udcd6 *Help Menu*
 
 /setpattern <pattern> - Rename format
 /seepattern - Show pattern
@@ -122,13 +123,15 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     if query.data == "about":
         await query.edit_message_caption(
-            "📢 *About Us*\n\nMade for easy file renaming. Contact us: @YourChannelHere",
+            "\ud83d\udce2 *About Us*\n\nMade for easy file renaming. Contact us: @YourChannelHere",
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u2b05\ufe0f Back", callback_data="back")]])
         )
     elif query.data == "help":
+        await query.message.delete()
         await help_cmd(update, context)
     elif query.data == "back":
+        await query.message.delete()
         await start(update, context)
     elif query.data == "close":
         await query.message.delete()
@@ -136,32 +139,35 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def set_pattern(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global pattern
     if not context.args:
-        await update.message.reply_text("❗ Usage: /setpattern <pattern>")
+        await update.message.reply_text("\u2757 Usage: /setpattern <pattern>")
         return
     pattern = ' '.join(context.args)
-    await update.message.reply_text(f"✅ Pattern set: `{pattern}`", parse_mode="Markdown")
+    await update.message.reply_text(f"\u2705 Pattern set: `{pattern}`", parse_mode="Markdown")
 
 async def seepattern(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"🧾 Current Pattern: `{pattern}`", parse_mode="Markdown")
+    await update.message.reply_text(f"\ud83d\udcbe Current Pattern: `{pattern}`", parse_mode="Markdown")
 
 async def delpattern(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global pattern
     pattern = "{original}_{number}"
-    await update.message.reply_text("♻️ Pattern reset to default.")
+    await update.message.reply_text("\u267b\ufe0f Pattern reset to default.")
 
 async def set_thumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("❗ Usage: /setthumburl <Telegra.ph URL>")
+        await update.message.reply_text("\u2757 Usage: /setthumburl <Telegra.ph URL>")
         return
     url = context.args[0]
     if not url.startswith("https://telegra.ph"):
-        await update.message.reply_text("❌ Only Telegra.ph images allowed.")
+        await update.message.reply_text("\u274c Only Telegra.ph images allowed.")
         return
     user_id = str(update.effective_user.id)
     thumbs[user_id] = url
     save_json(THUMBS_FILE, thumbs)
-    download_thumb(url, f"thumbnails/{user_id}.jpg")
-    await update.message.reply_text("✅ Thumbnail saved!")
+    try:
+        download_thumb(url, f"thumbnails/{user_id}.jpg")
+        await update.message.reply_text("\u2705 Thumbnail saved!")
+    except:
+        await update.message.reply_text("\u274c Failed to fetch thumbnail. Check the image URL.")
 
 async def seethumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -169,7 +175,7 @@ async def seethumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if os.path.exists(path):
         await update.message.reply_photo(photo=open(path, "rb"))
     else:
-        await update.message.reply_text("ℹ️ No thumbnail set.")
+        await update.message.reply_text("\u2139\ufe0f No thumbnail set.")
 
 async def deletethumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
@@ -177,30 +183,29 @@ async def deletethumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_json(THUMBS_FILE, thumbs)
     path = f"thumbnails/{user_id}.jpg"
     if os.path.exists(path): os.remove(path)
-    await update.message.reply_text("🗑️ Thumbnail deleted.")
+    await update.message.reply_text("\ud83d\uddd1\ufe0f Thumbnail deleted.")
 
 async def set_metadata(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("❗ Usage: /setmetadata <@channel>")
+        await update.message.reply_text("\u2757 Usage: /setmetadata <@channel>")
         return
     user_id = str(update.effective_user.id)
     metadata[user_id] = context.args[0]
     save_json(METADATA_FILE, metadata)
-    await update.message.reply_text(f"✅ Metadata set to {context.args[0]}")
+    await update.message.reply_text(f"\u2705 Metadata set to {context.args[0]}")
 
 async def auto_rename(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     if not context.args:
         status = autorename.get(user_id, False)
-        await update.message.reply_text(f"⚙️ Autorename is currently {'ON' if status else 'OFF'}")
+        await update.message.reply_text(f"\u2699\ufe0f Autorename is currently {'ON' if status else 'OFF'}")
         return
     if context.args[0].lower() == "on":
         autorename[user_id] = True
-        await update.message.reply_text("✅ Autorename enabled!")
+        await update.message.reply_text("\u2705 Autorename enabled!")
     else:
         autorename[user_id] = False
-        await update.message.reply_text("❌ Autorename disabled.")
-
+        await update.message.reply_text("\u274c Autorename disabled.")
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     uptime = str(datetime.now() - START_TIME).split('.')[0]
