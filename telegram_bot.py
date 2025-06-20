@@ -5,14 +5,13 @@ import logging
 import requests
 from PIL import Image
 from flask import Flask
-from telegram import (
-    Update, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
-)
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     CallbackQueryHandler, ContextTypes, filters
 )
 from pdf2image import convert_from_path
+import asyncio
 
 # === Configuration ===
 TOKEN = "7363840731:AAE7TD7eLEs7GjbsguH70v5o2XhT89BePCM"
@@ -22,7 +21,7 @@ logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 bot_app = Application.builder().token(TOKEN).build()
 
-# === JSON helpers ===
+# === JSON Helpers ===
 def load_json(path):
     if os.path.exists(path):
         with open(path, 'r') as f:
@@ -67,8 +66,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • I'll help you rename it.
 • Admin can use pattern, auto-rename, and thumbnail commands.
 
-Use buttons below to learn more.
-        """,
+Use buttons below to learn more.""",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -97,8 +95,7 @@ I rename files, generate thumbnails, extract PDF previews, and more!
 1. Send me any file.
 2. /setpattern {filename} or {episode}
 3. /autorename to toggle auto renaming
-4. /thumburl <image_url>
-        """,
+4. /thumburl <image_url>""",
             parse_mode='HTML',
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="back")]])
         )
@@ -186,7 +183,7 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❓ Unknown command. Use /start")
 
-# === Web App ===
+# === Flask Routes ===
 @app.route("/")
 def home():
     return "🤖 Bot is alive!"
@@ -205,8 +202,12 @@ bot_app.add_handler(CallbackQueryHandler(callback_handler))
 bot_app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO | filters.AUDIO | filters.PHOTO, handle_file))
 bot_app.add_handler(MessageHandler(filters.COMMAND, unknown))
 
-# === Run Bot ===
+# === Run ===
 if __name__ == '__main__':
-    import threading
-    threading.Thread(target=lambda: bot_app.run_polling()).start()
-    app.run(host="0.0.0.0", port=10000)
+    async def main():
+        await bot_app.initialize()
+        await bot_app.start()
+        await bot_app.updater.start_polling()
+        app.run(host="0.0.0.0", port=10000)
+
+    asyncio.run(main())
