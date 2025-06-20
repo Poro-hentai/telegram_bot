@@ -3,30 +3,31 @@ import json
 import uuid
 import logging
 import requests
+import asyncio
 from PIL import Image
 from flask import Flask
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
+from threading import Thread
+from pdf2image import convert_from_path
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     CallbackQueryHandler, ContextTypes, filters
 )
-from pdf2image import convert_from_path
-import asyncio
 
-# === Configuration ===
+# === Config ===
 TOKEN = "7363840731:AAE7TD7eLEs7GjbsguH70v5o2XhT89BePCM"
 ADMIN_ID = 5759232282
 
 logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
-bot_app = Application.builder().token(TOKEN).build()
 
-# === JSON Helpers ===
+patterns = {}
+thumbnails = {}
+AUTO_RENAME = False
+
+# === Load/Save JSON ===
 def load_json(path):
-    if os.path.exists(path):
-        with open(path, 'r') as f:
-            return json.load(f)
-    return {}
+    return json.load(open(path)) if os.path.exists(path) else {}
 
 def save_json(path, data):
     with open(path, 'w') as f:
@@ -34,7 +35,6 @@ def save_json(path, data):
 
 patterns = load_json("patterns.json")
 thumbnails = load_json("thumbs.json")
-AUTO_RENAME = False
 
 # === Utilities ===
 def extract_episode(filename):
@@ -52,7 +52,7 @@ def generate_pdf_thumb(path):
         logging.error("PDF Thumb Error: %s", e)
         return None
 
-# === Handlers ===
+# === Telegram Handlers ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("About", callback_data="about"), InlineKeyboardButton("Help", callback_data="help")],
@@ -164,50 +164,35 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if thumb and thumb.startswith("thumb_"):
         os.remove(thumb)
 
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != ADMIN_ID:
-        return await update.message.reply_text("Baka! You are not my senpai ✋")
-    if not context.args:
-        return await update.message.reply_text("Use: /broadcast Your message")
-    text = " ".join(context.args)
-    users = load_json("users.json")
-    count = 0
-    for uid in users:
-        try:
-            await bot_app.bot.send_message(chat_id=uid, text=text)
-            count += 1
-        except:
-            pass
-    await update.message.reply_text(f"✅ Broadcast sent to {count} users!")
-
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❓ Unknown command. Use /start")
 
-# === Flask Routes ===
-@app.route("/")
-def home():
-    return "🤖 Bot is alive!"
+# === Flask routes ===
+@app.route('/')
+def index():
+    return "Bot is running"
 
-@app.route("/restart")
-def restart():
-    return "🔄 Bot restarted by Shadow"
+# === Telegram bot start function ===
+async def run_bot():
+    application = Application.builder().token(TOKEN).build()
 
-# === Register Handlers ===
-bot_app.add_handler(CommandHandler("start", start))
-bot_app.add_handler(CommandHandler("setpattern", setpattern))
-bot_app.add_handler(CommandHandler("autorename", autorename))
-bot_app.add_handler(CommandHandler("thumburl", thumburl))
-bot_app.add_handler(CommandHandler("broadcast", broadcast))
-bot_app.add_handler(CallbackQueryHandler(callback_handler))
-bot_app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO | filters.AUDIO | filters.PHOTO, handle_file))
-bot_app.add_handler(MessageHandler(filters.COMMAND, unknown))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("setpattern", setpattern))
+    application.add_handler(CommandHandler("autorename", autorename))
+    application.add_handler(CommandHandler("thumburl", thumburl))
+    application.add_handler(CallbackQueryHandler(callback_handler))
+    application.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO | filters.AUDIO | filters.PHOTO, handle_file))
+    application.add_handler(MessageHandler(filters.COMMAND, unknown))
 
-# === Run ===
-if __name__ == '__main__':
-    async def main():
-        await bot_app.initialize()
-        await bot_app.start()
-        await bot_app.updater.start_polling()
-        app.run(host="0.0.0.0", port=10000)
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+    print("Bot polling started")
 
-    asyncio.run(main())
+# === Combine Flask + Bot ===
+def start_flask():
+    app.run(host="0.0.0.0", port=10000)
+
+if __name__ == "__main__":
+    Thread(target=start_flask).start()
+    asyncio.run(run_bot())
