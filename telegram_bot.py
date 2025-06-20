@@ -9,11 +9,11 @@ import logging
 import threading
 import requests
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 from flask import Flask
 from PIL import Image
 from io import BytesIO
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler,
     ContextTypes, filters
@@ -69,17 +69,19 @@ def generate_filename(original):
     return pattern.replace("{original}", base).replace("{number}", str(file_counter)) + ext
 
 def download_thumb(url, path):
-    r = requests.get(url)
-    img = Image.open(BytesIO(r.content)).convert("RGB")
-    img.save(path, "JPEG")
+    try:
+        r = requests.get(url, timeout=5)
+        r.raise_for_status()
+        img = Image.open(BytesIO(r.content)).convert("RGB")
+        img.save(path, "JPEG")
+    except Exception as e:
+        logger.error(f"Failed to download thumbnail: {e}")
 
 async def progress_bar(context, message, done_event):
-    bar_template = list("⬛⬛⬛⬛⬛⬛⬛⬛⬛⬛")
     for i in range(1, 11):
         if done_event.is_set(): break
-        temp = bar_template.copy()
-        temp[i-1] = "⬛"
-        await message.edit_text(f"📦 Progress: `{''.join(temp)}`", parse_mode="Markdown")
+        bar = ["⬛" if j < i else "⬜" for j in range(10)]
+        await message.edit_text(f"📦 Progress: `{''.join(bar)}`", parse_mode="Markdown")
         await asyncio.sleep(1)
 
 async def cleanup_file(path):
@@ -97,14 +99,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]]
     await update.message.reply_photo(
         photo="https://telegra.ph/file/9d18345731db88fff4f8c-d2b3920631195c5747.jpg",
-        caption="\ud83d\udc4b *Welcome to File Renamer Bot!*\n\nSend a file, I'll rename or customize it as per your settings!\nUse /help for full command list.",
+        caption="👋 *Welcome to File Renamer Bot!*\n\nSend a file, I'll rename or customize it as per your settings!\nUse /help for full command list.",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(buttons)
     )
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("""
-\ud83d\udcd6 *Help Menu*
+📖 *Help Menu*
 
 /setpattern <pattern> - Rename format
 /seepattern - Show pattern
@@ -123,9 +125,9 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     if query.data == "about":
         await query.edit_message_caption(
-            "\ud83d\udce2 *About Us*\n\nMade for easy file renaming. Contact us: @YourChannelHere",
+            "📢 *About Us*\n\nMade for easy file renaming. Contact us: @YourChannelHere",
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("\u2b05\ufe0f Back", callback_data="back")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back")]])
         )
     elif query.data == "help":
         await query.message.delete()
@@ -139,73 +141,66 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def set_pattern(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global pattern
     if not context.args:
-        await update.message.reply_text("\u2757 Usage: /setpattern <pattern>")
+        await update.message.reply_text("❗ Usage: /setpattern <pattern>")
         return
     pattern = ' '.join(context.args)
-    await update.message.reply_text(f"\u2705 Pattern set: `{pattern}`", parse_mode="Markdown")
+    await update.message.reply_text(f"✅ Pattern set: `{pattern}`", parse_mode="Markdown")
 
 async def seepattern(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"\ud83d\udcbe Current Pattern: `{pattern}`", parse_mode="Markdown")
+    await update.message.reply_text(f"💾 Current Pattern: `{pattern}`", parse_mode="Markdown")
 
 async def delpattern(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global pattern
     pattern = "{original}_{number}"
-    await update.message.reply_text("\u267b\ufe0f Pattern reset to default.")
+    await update.message.reply_text("♻️ Pattern reset to default.")
 
 async def set_thumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("\u2757 Usage: /setthumburl <Telegra.ph URL>")
+        await update.message.reply_text("❗ Usage: /setthumburl <Telegra.ph URL>")
         return
     url = context.args[0]
     if not url.startswith("https://telegra.ph"):
-        await update.message.reply_text("\u274c Only Telegra.ph images allowed.")
+        await update.message.reply_text("❌ Only Telegra.ph images allowed.")
         return
     user_id = str(update.effective_user.id)
     thumbs[user_id] = url
     save_json(THUMBS_FILE, thumbs)
-    try:
-        download_thumb(url, f"thumbnails/{user_id}.jpg")
-        await update.message.reply_text("\u2705 Thumbnail saved!")
-    except:
-        await update.message.reply_text("\u274c Failed to fetch thumbnail. Check the image URL.")
+    download_thumb(url, f"thumbnails/{user_id}.jpg")
+    await update.message.reply_text("✅ Thumbnail saved!")
 
 async def seethumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    path = f"thumbnails/{user_id}.jpg"
+    path = f"thumbnails/{update.effective_user.id}.jpg"
     if os.path.exists(path):
         await update.message.reply_photo(photo=open(path, "rb"))
     else:
-        await update.message.reply_text("\u2139\ufe0f No thumbnail set.")
+        await update.message.reply_text("ℹ️ No thumbnail set.")
 
 async def deletethumb(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    thumbs.pop(user_id, None)
+    uid = str(update.effective_user.id)
+    thumbs.pop(uid, None)
     save_json(THUMBS_FILE, thumbs)
-    path = f"thumbnails/{user_id}.jpg"
+    path = f"thumbnails/{uid}.jpg"
     if os.path.exists(path): os.remove(path)
-    await update.message.reply_text("\ud83d\uddd1\ufe0f Thumbnail deleted.")
+    await update.message.reply_text("🗑️ Thumbnail deleted.")
 
 async def set_metadata(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("\u2757 Usage: /setmetadata <@channel>")
+        await update.message.reply_text("❗ Usage: /setmetadata <@channel>")
         return
     user_id = str(update.effective_user.id)
     metadata[user_id] = context.args[0]
     save_json(METADATA_FILE, metadata)
-    await update.message.reply_text(f"\u2705 Metadata set to {context.args[0]}")
+    await update.message.reply_text(f"✅ Metadata set to {context.args[0]}")
 
 async def auto_rename(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
+    uid = str(update.effective_user.id)
     if not context.args:
-        status = autorename.get(user_id, False)
-        await update.message.reply_text(f"\u2699\ufe0f Autorename is currently {'ON' if status else 'OFF'}")
+        status = autorename.get(uid, False)
+        await update.message.reply_text(f"⚙️ Autorename is currently {'ON' if status else 'OFF'}")
         return
-    if context.args[0].lower() == "on":
-        autorename[user_id] = True
-        await update.message.reply_text("\u2705 Autorename enabled!")
-    else:
-        autorename[user_id] = False
-        await update.message.reply_text("\u274c Autorename disabled.")
+    autorename[uid] = context.args[0].lower() == "on"
+    await update.message.reply_text("✅ Autorename enabled!" if autorename[uid] else "❌ Autorename disabled.")
+
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     uptime = str(datetime.now() - START_TIME).split('.')[0]
@@ -225,12 +220,12 @@ def is_video(name): return name.lower().endswith((".mp4", ".mkv", ".avi"))
 def is_pdf(name): return name.lower().endswith(".pdf")
 
 def replace_metadata(name, user_id):
-    username = metadata.get(user_id)
-    return re.sub(r"@\w+", username, name) if username else name
+    tag = metadata.get(user_id)
+    return re.sub(r"@\w+", tag, name) if tag else name
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_user.id)
-    register_user(user_id)
+    uid = str(update.effective_user.id)
+    register_user(uid)
     file = update.message.document or update.message.video
     if not file:
         await update.message.reply_text("❗ Send a file please.")
@@ -238,12 +233,9 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = await update.message.reply_text("⬇️ Downloading file...")
     name = file.file_name or "file"
-    if autorename.get(user_id):
-        name = generate_filename(name)
-    else:
-        name = replace_metadata(name, user_id)
-
+    name = generate_filename(name) if autorename.get(uid) else replace_metadata(name, uid)
     path = f"downloads/{uuid.uuid4().hex}_{name}"
+
     tg_file = await file.get_file()
     await tg_file.download_to_drive(path)
 
@@ -251,7 +243,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(progress_bar(context, msg, done_event))
     await asyncio.sleep(2)
 
-    thumb_path = f"thumbnails/{user_id}.jpg"
+    thumb_path = f"thumbnails/{uid}.jpg"
     thumb = open(thumb_path, "rb") if os.path.exists(thumb_path) else None
 
     if not thumb and is_pdf(name):
